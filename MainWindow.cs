@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
-using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Windows.Forms;
+using System.Text.RegularExpressions;
+using System.Linq;
 
 namespace AchievementTracker
 {
@@ -17,151 +18,161 @@ namespace AchievementTracker
 
     public class MainWindow : Form
     {
+        [DllImport("DwmApi")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, int[] attrValue, int attrSize);
+
         private ListBox gameList = new ListBox();
         private TextBox nameInput = new TextBox();
         private TextBox appIdInput = new TextBox();
-        private TextBox apiInput = new TextBox();
-
+        private TextBox apiInput = new TextBox(); 
+        
         private List<TrackedGame> games = new List<TrackedGame>();
         private string gamesFilePath = "tracked_games.json";
-        private string settingsFilePath = "app_settings.json";
+        private string settingsFilePath = "app_settings.json"; 
 
         public string SavedApiKey { get; private set; } = "";
+
+        // Steam Color Palette
+        private Color steamBg = ColorTranslator.FromHtml("#1b2838");
+        private Color steamPanel = ColorTranslator.FromHtml("#171a21");
+        private Color steamText = ColorTranslator.FromHtml("#c7d5e0");
+        private Color steamBlue = ColorTranslator.FromHtml("#66c0f4");
+        private Color steamButtonBg = ColorTranslator.FromHtml("#2a475e");
+        private Color steamButtonHover = ColorTranslator.FromHtml("#66c0f4");
+        private Color steamGreen = ColorTranslator.FromHtml("#5c7e10");
 
         public MainWindow()
         {
             this.Text = "Universal Achievement Tracker";
-            this.Size = new Size(500, 450); // Made window slightly taller to fit everything nicely
-            this.BackColor = Color.FromArgb(30, 30, 30);
-            this.ForeColor = Color.White;
+            this.Size = new Size(600, 480); 
+            this.BackColor = steamBg;
+            this.ForeColor = steamText;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
 
+            // Force dark title bar
+            if (Environment.OSVersion.Version.Major >= 10)
+                DwmSetWindowAttribute(this.Handle, 20, new[] { 1 }, 4);
+
             LoadGames();
-            LoadSettings();
+            LoadSettings(); 
             InitializeUI();
         }
 
         private void InitializeUI()
         {
-            Label listLabel = new Label { Text = "Tracked Games:", Location = new Point(20, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+            // Header
+            Panel headerPanel = new Panel { Size = new Size(600, 60), BackColor = steamPanel, Location = new Point(0, 0) };
+            Label titleLabel = new Label { Text = "LIBRARY", Font = new Font("Segoe UI", 16, FontStyle.Bold), ForeColor = steamBlue, Location = new Point(20, 15), AutoSize = true };
+            headerPanel.Controls.Add(titleLabel);
+            this.Controls.Add(headerPanel);
+
+            // Left Side - Game List
+            Label listLabel = new Label { Text = "GAMES", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White };
             this.Controls.Add(listLabel);
 
             gameList = new ListBox
             {
-                Location = new Point(20, 45),
-                Size = new Size(200, 210), // Shrunk slightly to fit the remove button
-                BackColor = Color.FromArgb(45, 45, 48),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 10),
-                BorderStyle = BorderStyle.FixedSingle
+                Location = new Point(20, 100),
+                Size = new Size(240, 240),
+                BackColor = steamPanel,
+                ForeColor = steamText,
+                Font = new Font("Segoe UI", 11),
+                BorderStyle = BorderStyle.None,
+                DrawMode = DrawMode.OwnerDrawFixed,
+                ItemHeight = 35
             };
+            gameList.DrawItem += GameList_DrawItem;
             gameList.DoubleClick += GameList_DoubleClick;
             RefreshGameListUI();
             this.Controls.Add(gameList);
 
-            Button removeButton = new Button
-            {
-                Text = "Remove Selected",
-                Location = new Point(20, 260),
-                Size = new Size(200, 28),
-                BackColor = Color.IndianRed,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9, FontStyle.Bold)
-            };
-            removeButton.FlatAppearance.BorderSize = 0;
+            Button removeButton = CreateStyledButton("Remove Selected Game", new Point(20, 350), new Size(240, 30), ColorTranslator.FromHtml("#3d4450"), Color.White);
             removeButton.Click += RemoveButton_Click;
             this.Controls.Add(removeButton);
 
-            Label addLabel = new Label { Text = "Add New Game", Location = new Point(240, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+            // Right Side - Add Game Form
+            Label addLabel = new Label { Text = "ADD A GAME", Location = new Point(290, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White };
             this.Controls.Add(addLabel);
 
-            Label nameLabel = new Label { Text = "Game Name:", Location = new Point(240, 60), AutoSize = true };
+            Label nameLabel = new Label { Text = "Game Name:", Location = new Point(290, 105), AutoSize = true };
             this.Controls.Add(nameLabel);
-            nameInput = new TextBox { Location = new Point(240, 80), Size = new Size(200, 25), BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
+            nameInput = CreateStyledTextBox(new Point(290, 125));
             this.Controls.Add(nameInput);
 
-            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(240, 115), AutoSize = true };
+            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(290, 160), AutoSize = true };
             this.Controls.Add(appIdLabel);
-            appIdInput = new TextBox { Location = new Point(240, 135), Size = new Size(200, 25), BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
+            appIdInput = CreateStyledTextBox(new Point(290, 180));
             this.Controls.Add(appIdInput);
 
-            Button addButton = new Button
-            {
-                Text = "Add to Tracker",
-                Location = new Point(240, 180),
-                Size = new Size(200, 35),
-                BackColor = Color.DeepSkyBlue,
-                ForeColor = Color.Black,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9, FontStyle.Bold)
-            };
-            addButton.FlatAppearance.BorderSize = 0;
+            Button addButton = CreateStyledButton("Add to Tracker", new Point(290, 225), new Size(260, 35), steamButtonBg, steamBlue);
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
 
-            Button autoDetectButton = new Button
-            {
-                Text = "🔍 Auto-Detect (Browse .exe)",
-                Location = new Point(240, 225),
-                Size = new Size(200, 35),
-                BackColor = Color.MediumPurple,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9, FontStyle.Bold)
-            };
-            autoDetectButton.FlatAppearance.BorderSize = 0;
+            Button autoDetectButton = CreateStyledButton("🔍 Auto-Detect (.exe)", new Point(290, 270), new Size(260, 35), steamPanel, steamText);
             autoDetectButton.Click += AutoDetectBtn_Click;
             this.Controls.Add(autoDetectButton);
 
-            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 310) };
-            this.Controls.Add(divider);
-
-            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 325), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
-            this.Controls.Add(apiLabel);
-
-            apiInput = new TextBox
-            {
-                Location = new Point(20, 345),
-                Size = new Size(300, 25),
-                BackColor = Color.FromArgb(60, 60, 60),
-                ForeColor = Color.White,
+            Panel footerPanel = new Panel { Size = new Size(600, 70), BackColor = steamPanel, Location = new Point(0, 400) };
+            Label apiLabel = new Label { Text = "Steam Developer API Key:", Location = new Point(20, 10), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
+            footerPanel.Controls.Add(apiLabel);
+            
+            apiInput = new TextBox { 
+                Location = new Point(20, 28), 
+                Size = new Size(380, 25), 
+                BackColor = steamBg, 
+                ForeColor = Color.White, 
                 BorderStyle = BorderStyle.FixedSingle,
-                Text = SavedApiKey
+                Font = new Font("Segoe UI", 9),
+                Text = SavedApiKey 
             };
-            this.Controls.Add(apiInput);
+            footerPanel.Controls.Add(apiInput);
 
-            Button saveApiButton = new Button
-            {
-                Text = "Save Key",
-                Location = new Point(330, 344),
-                Size = new Size(110, 27),
-                BackColor = Color.MediumSeaGreen,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            saveApiButton.FlatAppearance.BorderSize = 0;
+            Button saveApiButton = CreateStyledButton("Save Key", new Point(410, 26), new Size(140, 28), steamGreen, Color.White);
             saveApiButton.Click += SaveApiButton_Click;
-            this.Controls.Add(saveApiButton);
+            footerPanel.Controls.Add(saveApiButton);
+            this.Controls.Add(footerPanel);
+        }
+
+        private TextBox CreateStyledTextBox(Point location)
+        {
+            return new TextBox { Location = location, Size = new Size(260, 25), BackColor = steamPanel, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
+        }
+
+        private Button CreateStyledButton(string text, Point location, Size size, Color bg, Color fg)
+        {
+            Button btn = new Button
+            {
+                Text = text, Location = location, Size = size, BackColor = bg, ForeColor = fg,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9, FontStyle.Bold), Cursor = Cursors.Hand
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.MouseEnter += (s, e) => { btn.BackColor = steamBlue; btn.ForeColor = Color.White; };
+            btn.MouseLeave += (s, e) => { btn.BackColor = bg; btn.ForeColor = fg; };
+            return btn;
+        }
+
+        private void GameList_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+            bool isSelected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            
+            e.Graphics.FillRectangle(new SolidBrush(isSelected ? steamButtonBg : steamPanel), e.Bounds);
+            e.Graphics.DrawString(gameList.Items[e.Index].ToString(), gameList.Font, new SolidBrush(isSelected ? Color.White : steamText), e.Bounds.X + 10, e.Bounds.Y + 8);
         }
 
         private void GameList_DoubleClick(object? sender, EventArgs e)
         {
             if (gameList.SelectedIndex == -1) return;
-            
-            // Get the selected game
             string selectedText = gameList.SelectedItem?.ToString() ?? "";
             var match = Regex.Match(selectedText, @"\(([^)]+)\)");
-            
             if (match.Success)
             {
                 string appId = match.Groups[1].Value;
                 var game = games.FirstOrDefault(g => g.AppId == appId);
                 if (game != null)
                 {
-                    // Open the new Steam-style details window!
                     GameDetailsWindow details = new GameDetailsWindow(game, SavedApiKey);
                     details.ShowDialog();
                 }
@@ -170,29 +181,15 @@ namespace AchievementTracker
 
         private void RemoveButton_Click(object? sender, EventArgs e)
         {
-            if (gameList.SelectedIndex == -1)
-            {
-                MessageBox.Show("Please select a game from the list to remove.", "Nothing Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            // Get the selected game string (e.g., "Hollow Knight (367520)") and extract the AppId
+            if (gameList.SelectedIndex == -1) return;
             string selectedText = gameList.SelectedItem?.ToString() ?? "";
             var match = Regex.Match(selectedText, @"\(([^)]+)\)");
-            
             if (match.Success)
             {
-                string appIdToRemove = match.Groups[1].Value;
-                
-                var confirmResult = MessageBox.Show($"Are you sure you want to stop tracking this game?", "Confirm Removal", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (confirmResult == DialogResult.Yes)
+                if (MessageBox.Show($"Remove this game from tracking?", "Confirm", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 {
-                    // Remove from list and save
-                    games.RemoveAll(g => g.AppId == appIdToRemove);
-                    SaveGames();
-                    RefreshGameListUI();
-                    
-                    // Tell the engine to stop watching this game's folders
+                    games.RemoveAll(g => g.AppId == match.Groups[1].Value);
+                    SaveGames(); RefreshGameListUI();
                     Program.UpdateWatchers(games);
                 }
             }
@@ -200,66 +197,40 @@ namespace AchievementTracker
 
         private void AutoDetectBtn_Click(object? sender, EventArgs e)
         {
-            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            using (OpenFileDialog ofd = new OpenFileDialog() { Filter = "Game Executable (*.exe)|*.exe", Title = "Select the game's .exe" })
             {
-                openFileDialog.Filter = "Game Executable (*.exe)|*.exe";
-                openFileDialog.Title = "Select the cracked game's main .exe file";
-
-                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                if (ofd.ShowDialog() == DialogResult.OK)
                 {
-                    string gameFolder = Path.GetDirectoryName(openFileDialog.FileName) ?? "";
-                    string potentialGameName = Path.GetFileNameWithoutExtension(openFileDialog.FileName);
+                    string gameFolder = Path.GetDirectoryName(ofd.FileName) ?? "";
+                    string potentialName = Path.GetFileNameWithoutExtension(ofd.FileName);
                     string? detectedAppId = null;
 
-                    string[] filesToScan = {
-                        "steam_appid.txt",
-                        "steam_emu.ini",
-                        "OnlineFix.ini",
-                        "tenoke.ini",
-                        "FLT.ini"
-                    };
+                    string[] filesToScan = { "steam_appid.txt", "steam_emu.ini", "FLT.ini", "tenoke.ini", "OnlineFix.ini" };
 
                     try
                     {
                         foreach (string file in Directory.EnumerateFiles(gameFolder, "*.*", SearchOption.AllDirectories))
                         {
                             string fileName = Path.GetFileName(file);
-                            
                             if (filesToScan.Contains(fileName, StringComparer.OrdinalIgnoreCase))
                             {
                                 string content = File.ReadAllText(file);
-                                
-                                if (fileName.Equals("steam_appid.txt", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    detectedAppId = content.Trim();
-                                }
+                                if (fileName.Equals("steam_appid.txt", StringComparison.OrdinalIgnoreCase)) detectedAppId = content.Trim();
                                 else
                                 {
                                     var match = Regex.Match(content, @"AppId\s*=\s*(\d+)", RegexOptions.IgnoreCase);
                                     if (!match.Success) match = Regex.Match(content, @"SteamAppId\s*=\s*(\d+)", RegexOptions.IgnoreCase);
-                                    
                                     if (match.Success) detectedAppId = match.Groups[1].Value;
                                 }
-
                                 if (!string.IsNullOrEmpty(detectedAppId)) break;
                             }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Could not scan folder: {ex.Message}", "Scan Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return;
-                    }
+                    } catch { }
 
                     if (!string.IsNullOrEmpty(detectedAppId))
                     {
-                        nameInput.Text = potentialGameName;
-                        appIdInput.Text = detectedAppId;
-                        MessageBox.Show($"Found App ID: {detectedAppId}!\n\nYou can tweak the Game Name if you want, then click 'Add to Tracker'.", "Detection Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    else
-                    {
-                        MessageBox.Show("Could not find a valid App ID in that folder. You may need to enter it manually.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        nameInput.Text = potentialName; appIdInput.Text = detectedAppId;
+                        MessageBox.Show($"App ID {detectedAppId} found! Click Add.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }
             }
@@ -269,8 +240,7 @@ namespace AchievementTracker
         {
             SavedApiKey = apiInput.Text.Trim();
             File.WriteAllText(settingsFilePath, JsonSerializer.Serialize(new { SteamApiKey = SavedApiKey }));
-            MessageBox.Show("API Key Saved Successfully!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
+            MessageBox.Show("API Key Saved!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
             Program.TriggerDataDownload(games, SavedApiKey);
         }
 
@@ -278,80 +248,41 @@ namespace AchievementTracker
         {
             if (File.Exists(settingsFilePath))
             {
-                try
-                {
-                    string json = File.ReadAllText(settingsFilePath);
-                    using JsonDocument doc = JsonDocument.Parse(json);
-                    if (doc.RootElement.TryGetProperty("SteamApiKey", out JsonElement keyElement))
-                    {
-                        SavedApiKey = keyElement.GetString() ?? "";
-                    }
-                }
-                catch { }
+                try {
+                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(settingsFilePath));
+                    if (doc.RootElement.TryGetProperty("SteamApiKey", out JsonElement key)) SavedApiKey = key.GetString() ?? "";
+                } catch { }
             }
         }
 
         private void AddButton_Click(object? sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(nameInput.Text) || string.IsNullOrWhiteSpace(appIdInput.Text))
-            {
-                MessageBox.Show("Please enter both a Game Name and an App ID.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            var newGame = new TrackedGame { Name = nameInput.Text, AppId = appIdInput.Text };
-            games.Add(newGame);
-            SaveGames();
-            RefreshGameListUI();
-
-            nameInput.Text = "";
-            appIdInput.Text = "";
-
-            Program.UpdateWatchers(games);
-            Program.TriggerDataDownload(games, SavedApiKey);
-
-            MessageBox.Show($"Started tracking {newGame.Name}!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (string.IsNullOrWhiteSpace(nameInput.Text) || string.IsNullOrWhiteSpace(appIdInput.Text)) return;
+            games.Add(new TrackedGame { Name = nameInput.Text, AppId = appIdInput.Text });
+            SaveGames(); RefreshGameListUI();
+            nameInput.Text = ""; appIdInput.Text = "";
+            Program.UpdateWatchers(games); Program.TriggerDataDownload(games, SavedApiKey); 
         }
 
         private void LoadGames()
         {
             if (File.Exists(gamesFilePath))
             {
-                try
-                {
+                try {
                     string json = File.ReadAllText(gamesFilePath);
-                    if (!string.IsNullOrWhiteSpace(json))
-                        games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
-                }
-                catch { games = new List<TrackedGame>(); }
+                    if (!string.IsNullOrWhiteSpace(json)) games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
+                } catch { games = new List<TrackedGame>(); }
             }
         }
 
-        private void SaveGames()
-        {
-            string json = JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(gamesFilePath, json);
-        }
-
+        private void SaveGames() => File.WriteAllText(gamesFilePath, JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true }));
         private void RefreshGameListUI()
         {
             gameList.Items.Clear();
-            foreach (var game in games)
-            {
-                gameList.Items.Add($"{game.Name} ({game.AppId})");
-            }
+            foreach (var game in games) gameList.Items.Add($"{game.Name} ({game.AppId})");
         }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (e.CloseReason == CloseReason.UserClosing)
-            {
-                e.Cancel = true;
-                this.Hide();
-            }
-            base.OnFormClosing(e);
-        }
-
+        protected override void OnFormClosing(FormClosingEventArgs e) { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; this.Hide(); } base.OnFormClosing(e); }
         public List<TrackedGame> GetTrackedGames() => games;
     }
 }
