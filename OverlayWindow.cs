@@ -23,11 +23,9 @@ namespace AchievementTracker
             this.BackColor = Color.Magenta;
             this.TransparencyKey = Color.Magenta;
 
-            // Handle potential null from Screen.PrimaryScreen
             var screen = Screen.PrimaryScreen;
             if (screen == null)
             {
-                 // Fallback if no screen detected
                  this.Close();
                  return;
             }
@@ -36,7 +34,7 @@ namespace AchievementTracker
             int screenHeight = screen.Bounds.Height;
             this.Size = new Size(350, 80);
             
-            targetY = screenHeight - 150; 
+            targetY = screenHeight - 160; // Moved it up slightly to ensure it clears the taskbar
             currentY = screenHeight;      
             this.Location = new Point((screenWidth - this.Width) / 2, currentY);
 
@@ -109,19 +107,14 @@ namespace AchievementTracker
                 if (currentY >= screenHeight) 
                 {
                     animationTimer.Stop();
-                    this.Close(); 
-                    Application.ExitThread(); // Added to properly close the thread we created in TrackerEngine
+                    this.Close(); // Safely closes the UI without crashing the app!
                 }
             }
         }
 
         private void PlayNotificationSound()
         {
-            try 
-            {
-                SystemSounds.Exclamation.Play(); 
-            } 
-            catch { }
+            try { SystemSounds.Exclamation.Play(); } catch { }
         }
     }
 }

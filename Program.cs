@@ -95,7 +95,7 @@ namespace AchievementTracker
                 FileSystemWatcher codexWatcher = new FileSystemWatcher(codexDir, "achievements.ini")
                 {
                     NotifyFilter = NotifyFilters.LastWrite,
-                    IncludeSubdirectories = true, // Magic fix! Catches it anywhere inside the CODEX folder
+                    IncludeSubdirectories = true,
                     EnableRaisingEvents = true
                 };
                 codexWatcher.Changed += (sender, e) => {
@@ -261,15 +261,18 @@ namespace AchievementTracker
             catch { }
         }
 
+        // --- NEW, SAFE POPUP DRAWING METHOD ---
         static void ShowPopup(string achievementName)
         {
-            Thread uiThread = new Thread(() =>
+            if (dashboard != null)
             {
-                OverlayWindow window = new OverlayWindow(achievementName);
-                Application.Run(window);
-            });
-            uiThread.SetApartmentState(ApartmentState.STA);
-            uiThread.Start();
+                // This forces Windows to draw the window safely on the main thread
+                dashboard.Invoke(new Action(() =>
+                {
+                    OverlayWindow window = new OverlayWindow(achievementName);
+                    window.Show(); 
+                }));
+            }
         }
     }
 }
