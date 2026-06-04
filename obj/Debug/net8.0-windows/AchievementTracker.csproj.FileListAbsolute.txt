@@ -1,0 +1,14 @@
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.GeneratedMSBuildEditorConfig.editorconfig
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.AssemblyInfoInputs.cache
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.AssemblyInfo.cs
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.csproj.CoreCompileInputs.cache
+D:\TAHIR CODE\AchievementTracker\bin\Debug\net8.0-windows\AchievementTracker.exe
+D:\TAHIR CODE\AchievementTracker\bin\Debug\net8.0-windows\AchievementTracker.deps.json
+D:\TAHIR CODE\AchievementTracker\bin\Debug\net8.0-windows\AchievementTracker.runtimeconfig.json
+D:\TAHIR CODE\AchievementTracker\bin\Debug\net8.0-windows\AchievementTracker.dll
+D:\TAHIR CODE\AchievementTracker\bin\Debug\net8.0-windows\AchievementTracker.pdb
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.dll
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\refint\AchievementTracker.dll
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.pdb
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.genruntimeconfig.cache
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\ref\AchievementTracker.dll
