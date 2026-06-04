@@ -48,14 +48,9 @@ namespace AchievementTracker
             };
 
             trayIcon.DoubleClick += (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } };
-
             trayIcon.ContextMenuStrip.Items.Add("Open Dashboard", null, (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } });
             trayIcon.ContextMenuStrip.Items.Add("-"); 
-            trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) =>
-            {
-                if (trayIcon != null) trayIcon.Visible = false;
-                Environment.Exit(0); 
-            });
+            trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) => { if (trayIcon != null) trayIcon.Visible = false; Environment.Exit(0); });
         }
 
         public static void UpdateWatchers(List<TrackedGame> games)
@@ -67,43 +62,49 @@ namespace AchievementTracker
             }
             activeWatchers.Clear();
 
+            string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
+
             foreach (var game in games)
             {
-                // 1. WATCHER FOR GOLDBERG EMULATOR (JSON)
+                // 1. WATCH GOLDBERG (JSON)
                 string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", game.AppId);
                 Directory.CreateDirectory(goldbergDir); 
                 LoadGoldbergBaseline(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
+                AttachWatcher(goldbergDir, "*.json", (s, e) => OnGoldbergFileChanged(s, e, game.AppId));
 
-                FileSystemWatcher goldbergWatcher = new FileSystemWatcher(goldbergDir, "achievements.json")
-                {
-                    NotifyFilter = NotifyFilters.LastWrite,
-                    EnableRaisingEvents = true
-                };
-                goldbergWatcher.Changed += (sender, e) => OnGoldbergFileChanged(sender, e, game.AppId);
-                activeWatchers.Add(goldbergWatcher);
-
-                // 2. WATCHER FOR CODEX EMULATOR (INI)
-                string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
-                string codexDir = Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId);
-                Directory.CreateDirectory(codexDir);
+                // 2. WATCH PUBLIC DOCUMENT EMULATORS (INI)
+                // This covers CODEX, RUNE, FLT, and OnlineFix!
+                string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"OnlineFix" };
                 
-                // Baseline check
-                string iniPath = Path.Combine(codexDir, "achievements.ini");
-                if (!File.Exists(iniPath)) iniPath = Path.Combine(codexDir, "remote", "achievements.ini");
-                ParseCodexIni(game.AppId, iniPath, isBaseline: true);
-
-                FileSystemWatcher codexWatcher = new FileSystemWatcher(codexDir, "achievements.ini")
+                foreach (string emu in emuFolders)
                 {
-                    NotifyFilter = NotifyFilters.LastWrite,
-                    IncludeSubdirectories = true,
-                    EnableRaisingEvents = true
-                };
-                codexWatcher.Changed += (sender, e) => {
-                    Thread.Sleep(50); // Slight delay for file lock
-                    ParseCodexIni(game.AppId, e.FullPath, isBaseline: false);
-                };
-                activeWatchers.Add(codexWatcher);
+                    string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
+                    Directory.CreateDirectory(emuDir);
+
+                    // Load baseline state so we don't popup old achievements
+                    string iniPath = Path.Combine(emuDir, "achievements.ini");
+                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
+                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); // Old CODEX style
+                    ParseIni(game.AppId, iniPath, isBaseline: true);
+
+                    AttachWatcher(emuDir, "*", (s, e) => {
+                        if (e.Name.Contains("achievement") || e.Name.Contains("stats")) 
+                            ParseIni(game.AppId, e.FullPath, isBaseline: false);
+                    });
+                }
             }
+        }
+
+        static void AttachWatcher(string directory, string filter, FileSystemEventHandler onChanged)
+        {
+            FileSystemWatcher watcher = new FileSystemWatcher(directory, filter)
+            {
+                NotifyFilter = NotifyFilters.LastWrite,
+                IncludeSubdirectories = true,
+                EnableRaisingEvents = true
+            };
+            watcher.Changed += onChanged;
+            activeWatchers.Add(watcher);
         }
 
         // --- GOLDBERG JSON PARSER ---
@@ -117,11 +118,9 @@ namespace AchievementTracker
                 using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
-                    if (ExtractGoldbergStatus(prop.Value)) 
-                        previousState[appId + "_" + prop.Name] = true;
+                    if (ExtractGoldbergStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
                 }
-            }
-            catch { }
+            } catch { }
         }
 
         static void OnGoldbergFileChanged(object sender, FileSystemEventArgs e, string appId)
@@ -141,30 +140,26 @@ namespace AchievementTracker
                     if (isEarned && (!previousState.ContainsKey(stateKey) || !previousState[stateKey]))
                     {
                         previousState[stateKey] = true; 
-                        string lookupKey = appId + "_" + achKey;
-                        string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
-                        ShowPopup(displayName);
+                        ShowPopup(GetDisplayName(appId, achKey));
                     }
                 }
-            }
-            catch { }
+            } catch { }
         }
 
         static bool ExtractGoldbergStatus(JsonElement element)
         {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("earned", out JsonElement earnedElement))
-                return earnedElement.GetBoolean(); 
-            else if (element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False)
-                return element.GetBoolean(); 
+            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("earned", out JsonElement earned)) return earned.GetBoolean(); 
+            else if (element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False) return element.GetBoolean(); 
             return false;
         }
 
-        // --- UPGRADED CODEX INI PARSER ---
-        static void ParseCodexIni(string appId, string filePath, bool isBaseline)
+        // --- UNIVERSAL INI PARSER (CODEX, RUNE, FLT, OnlineFix) ---
+        static void ParseIni(string appId, string filePath, bool isBaseline)
         {
             if (!File.Exists(filePath)) return;
             try
             {
+                Thread.Sleep(50); // Prevent file locks
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
                 string line;
@@ -173,47 +168,38 @@ namespace AchievementTracker
                 while ((line = sr.ReadLine()) != null)
                 {
                     line = line.Trim();
-
-                    // Detect section headers like [CHARMED]
-                    if (line.StartsWith("[") && line.EndsWith("]"))
+                    if (line.StartsWith("[") && line.EndsWith("]")) currentSection = line.Substring(1, line.Length - 2);
+                    else if ((line == "Achieved=1" || line == "Unlocked=1" || line.EndsWith("=1")) && !string.IsNullOrEmpty(currentSection) && currentSection != "SteamAchievements")
                     {
-                        currentSection = line.Substring(1, line.Length - 2);
-                    }
-                    // Detect if the current section unlocked!
-                    else if (line == "Achieved=1" && !string.IsNullOrEmpty(currentSection) && currentSection != "SteamAchievements")
-                    {
-                        string achKey = currentSection;
+                        // Some emulators put the achievement code as the section, some put it as the key. We handle both.
+                        string achKey = line.Contains("=") && line.Split('=')[0] != "Achieved" && line.Split('=')[0] != "Unlocked" ? line.Split('=')[0] : currentSection;
                         string stateKey = appId + "_" + achKey; 
 
                         if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
                         {
                             previousState[stateKey] = true; 
-                            
-                            if (!isBaseline) // Only popup if this is a live change
-                            {
-                                string lookupKey = appId + "_" + achKey;
-                                string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
-                                ShowPopup(displayName);
-                            }
+                            if (!isBaseline) ShowPopup(GetDisplayName(appId, achKey));
                         }
                     }
                 }
-            }
-            catch { }
+            } catch { }
         }
 
-        // --- TRANSLATOR & API STUFF ---
+        // --- API & DISPLAY LOGIC ---
+        static string GetDisplayName(string appId, string internalKey)
+        {
+            string lookupKey = appId + "_" + internalKey;
+            return achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : internalKey;
+        }
+
         static void LoadTranslator()
         {
             if (File.Exists(dictionaryPath))
             {
-                try 
-                {
+                try {
                     string json = File.ReadAllText(dictionaryPath);
-                    if (!string.IsNullOrWhiteSpace(json)) 
-                        achievementNames = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
-                }
-                catch { achievementNames = new Dictionary<string, string>(); }
+                    if (!string.IsNullOrWhiteSpace(json)) achievementNames = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                } catch { achievementNames = new Dictionary<string, string>(); }
             }
         }
 
@@ -225,10 +211,7 @@ namespace AchievementTracker
 
         static async Task DownloadAllGameData(List<TrackedGame> games, string apiKey)
         {
-            foreach (var game in games)
-            {
-                await FetchSteamData(game.AppId, apiKey);
-            }
+            foreach (var game in games) await FetchSteamData(game.AppId, apiKey);
             File.WriteAllText(dictionaryPath, JsonSerializer.Serialize(achievementNames, new JsonSerializerOptions { WriteIndented = true }));
         }
 
@@ -238,37 +221,27 @@ namespace AchievementTracker
             {
                 string url = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={apiKey}&appid={appId}";
                 HttpResponseMessage response = await httpClient.GetAsync(url);
-                
                 if (response.IsSuccessStatusCode)
                 {
                     string json = await response.Content.ReadAsStringAsync();
                     using JsonDocument doc = JsonDocument.Parse(json);
-                    
-                    if (doc.RootElement.TryGetProperty("game", out JsonElement gameElement) &&
-                        gameElement.TryGetProperty("availableGameStats", out JsonElement statsElement) &&
-                        statsElement.TryGetProperty("achievements", out JsonElement achievementsElement))
+                    if (doc.RootElement.TryGetProperty("game", out JsonElement gameElement) && gameElement.TryGetProperty("availableGameStats", out JsonElement statsElement) && statsElement.TryGetProperty("achievements", out JsonElement achievementsElement))
                     {
                         foreach (JsonElement ach in achievementsElement.EnumerateArray())
                         {
                             string internalName = ach.GetProperty("name").GetString() ?? "";
-                            string displayName = ach.GetProperty("displayName").GetString() ?? internalName;
-                            
-                            achievementNames[$"{appId}_{internalName}"] = displayName;
+                            achievementNames[$"{appId}_{internalName}"] = ach.GetProperty("displayName").GetString() ?? internalName;
                         }
                     }
                 }
-            }
-            catch { }
+            } catch { }
         }
 
-        // --- NEW, SAFE POPUP DRAWING METHOD ---
         static void ShowPopup(string achievementName)
         {
             if (dashboard != null)
             {
-                // This forces Windows to draw the window safely on the main thread
-                dashboard.Invoke(new Action(() =>
-                {
+                dashboard.Invoke(new Action(() => {
                     OverlayWindow window = new OverlayWindow(achievementName);
                     window.Show(); 
                 }));

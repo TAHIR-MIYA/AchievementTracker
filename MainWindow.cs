@@ -29,7 +29,7 @@ namespace AchievementTracker
         public MainWindow()
         {
             this.Text = "Universal Achievement Tracker";
-            this.Size = new Size(500, 440); // Slightly taller for the new button
+            this.Size = new Size(500, 420); 
             this.BackColor = Color.FromArgb(30, 30, 30);
             this.ForeColor = Color.White;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -43,14 +43,13 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
-            // --- Left Side: Game List ---
             Label listLabel = new Label { Text = "Tracked Games:", Location = new Point(20, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(listLabel);
 
             gameList = new ListBox
             {
                 Location = new Point(20, 45),
-                Size = new Size(200, 250),
+                Size = new Size(200, 240),
                 BackColor = Color.FromArgb(45, 45, 48),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 10),
@@ -59,7 +58,6 @@ namespace AchievementTracker
             RefreshGameListUI();
             this.Controls.Add(gameList);
 
-            // --- Right Side: Add New Game ---
             Label addLabel = new Label { Text = "Add New Game", Location = new Point(240, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(addLabel);
 
@@ -87,7 +85,6 @@ namespace AchievementTracker
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
 
-            // --- THE NEW AUTO-DETECT BUTTON ---
             Button autoDetectBtn = new Button
             {
                 Text = "🔍 Auto-Detect (Browse .exe)",
@@ -102,15 +99,14 @@ namespace AchievementTracker
             autoDetectBtn.Click += AutoDetectBtn_Click;
             this.Controls.Add(autoDetectBtn);
 
-            // --- Bottom Section: Global Settings ---
-            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 310) };
+            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 300) };
             this.Controls.Add(divider);
 
-            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 325), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 315), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
             this.Controls.Add(apiLabel);
             
             apiInput = new TextBox { 
-                Location = new Point(20, 345), 
+                Location = new Point(20, 335), 
                 Size = new Size(300, 25), 
                 BackColor = Color.FromArgb(60, 60, 60), 
                 ForeColor = Color.White, 
@@ -122,7 +118,7 @@ namespace AchievementTracker
             Button saveApiButton = new Button
             {
                 Text = "Save Key",
-                Location = new Point(330, 344),
+                Location = new Point(330, 334),
                 Size = new Size(110, 27),
                 BackColor = Color.MediumSeaGreen,
                 ForeColor = Color.White,
@@ -133,7 +129,6 @@ namespace AchievementTracker
             this.Controls.Add(saveApiButton);
         }
 
-        // --- NEW AUTO DETECT LOGIC ---
         private void AutoDetectBtn_Click(object? sender, EventArgs e)
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
@@ -143,46 +138,47 @@ namespace AchievementTracker
 
                 if (openFileDialog.ShowDialog() == DialogResult.OK)
                 {
-                    string exePath = openFileDialog.FileName;
-                    string dir = Path.GetDirectoryName(exePath) ?? "";
+                    string dir = Path.GetDirectoryName(openFileDialog.FileName) ?? "";
                     string detectedAppId = "";
 
-                    // Strategy 1: Look for standard steam_appid.txt
-                    string appIdPath = Path.Combine(dir, "steam_appid.txt");
-                    if (File.Exists(appIdPath)) detectedAppId = File.ReadAllText(appIdPath).Trim();
-
-                    // Strategy 2: Look for Goldberg's hidden steam_appid.txt
-                    if (string.IsNullOrEmpty(detectedAppId))
+                    // 1. Check standard text files
+                    string[] txtFiles = { "steam_appid.txt", @"steam_settings\steam_appid.txt" };
+                    foreach (var txt in txtFiles)
                     {
-                        appIdPath = Path.Combine(dir, "steam_settings", "steam_appid.txt");
-                        if (File.Exists(appIdPath)) detectedAppId = File.ReadAllText(appIdPath).Trim();
+                        string path = Path.Combine(dir, txt);
+                        if (File.Exists(path)) { detectedAppId = File.ReadAllText(path).Trim(); break; }
                     }
 
-                    // Strategy 3: Read inside CODEX steam_emu.ini
+                    // 2. Check ALL known emulator config files
                     if (string.IsNullOrEmpty(detectedAppId))
                     {
-                        string iniPath = Path.Combine(dir, "steam_emu.ini");
-                        if (File.Exists(iniPath))
+                        string[] iniFiles = { "steam_emu.ini", "OnlineFix.ini", "FLT.ini", "SmartSteamEmu.ini", "tenoke.ini", "ali213.ini" };
+                        foreach (var ini in iniFiles)
                         {
-                            foreach (string line in File.ReadLines(iniPath))
+                            string path = Path.Combine(dir, ini);
+                            if (File.Exists(path))
                             {
-                                if (line.Trim().StartsWith("AppId="))
+                                foreach (string line in File.ReadLines(path))
                                 {
-                                    detectedAppId = line.Split('=')[1].Trim();
-                                    break;
+                                    if (line.Trim().StartsWith("AppId=") || line.Trim().StartsWith("RealAppId=") || line.Trim().StartsWith("AppID="))
+                                    {
+                                        detectedAppId = line.Split('=')[1].Trim();
+                                        break;
+                                    }
                                 }
                             }
+                            if (!string.IsNullOrEmpty(detectedAppId)) break;
                         }
                     }
 
                     if (!string.IsNullOrEmpty(detectedAppId))
                     {
                         appIdInput.Text = detectedAppId;
-                        nameInput.Text = new DirectoryInfo(dir).Name; // Uses the folder name as a guess!
+                        nameInput.Text = new DirectoryInfo(dir).Name;
                     }
                     else
                     {
-                        MessageBox.Show("Could not automatically find the Steam App ID. You may need to enter it manually.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show("Could not automatically find the Steam App ID. You may need to look it up on SteamDB.info and enter it manually.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
             }
@@ -193,7 +189,6 @@ namespace AchievementTracker
             SavedApiKey = apiInput.Text.Trim();
             File.WriteAllText(settingsFilePath, JsonSerializer.Serialize(new { SteamApiKey = SavedApiKey }));
             MessageBox.Show("API Key Saved Successfully!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            
             Program.TriggerDataDownload(games, SavedApiKey);
         }
 
@@ -205,9 +200,7 @@ namespace AchievementTracker
                     string json = File.ReadAllText(settingsFilePath);
                     using JsonDocument doc = JsonDocument.Parse(json);
                     if (doc.RootElement.TryGetProperty("SteamApiKey", out JsonElement keyElement))
-                    {
                         SavedApiKey = keyElement.GetString() ?? "";
-                    }
                 } catch { }
             }
         }
@@ -230,7 +223,6 @@ namespace AchievementTracker
 
             Program.UpdateWatchers(games);
             Program.TriggerDataDownload(games, SavedApiKey); 
-            
             MessageBox.Show($"Started tracking {newGame.Name}!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
@@ -238,38 +230,28 @@ namespace AchievementTracker
         {
             if (File.Exists(gamesFilePath))
             {
-                try 
-                {
+                try {
                     string json = File.ReadAllText(gamesFilePath);
                     if (!string.IsNullOrWhiteSpace(json)) 
                         games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
-                }
-                catch { games = new List<TrackedGame>(); }
+                } catch { games = new List<TrackedGame>(); }
             }
         }
 
         private void SaveGames()
         {
-            string json = JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(gamesFilePath, json);
+            File.WriteAllText(gamesFilePath, JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         private void RefreshGameListUI()
         {
             gameList.Items.Clear();
-            foreach (var game in games)
-            {
-                gameList.Items.Add($"{game.Name} ({game.AppId})");
-            }
+            foreach (var game in games) gameList.Items.Add($"{game.Name} ({game.AppId})");
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (e.CloseReason == CloseReason.UserClosing)
-            {
-                e.Cancel = true;
-                this.Hide();     
-            }
+            if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; this.Hide(); }
             base.OnFormClosing(e);
         }
         
