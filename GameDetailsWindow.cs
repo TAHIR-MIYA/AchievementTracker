@@ -63,7 +63,6 @@ namespace AchievementTracker
             achievementListView.Columns.Add("Description", 300);
             achievementListView.Columns.Add("Status", 100);
 
-            // Create Steam-style Categories
             ListViewGroup grpUnlocked = new ListViewGroup("Unlocked Achievements");
             ListViewGroup grpLocked = new ListViewGroup("Locked Achievements");
             ListViewGroup grpHidden = new ListViewGroup("Hidden / Secret Achievements");
@@ -86,10 +85,7 @@ namespace AchievementTracker
 
             this.Text = "Loading data from Steam...";
             
-            // 1. Scan local hard drive to see what the player has actually unlocked
             ScanLocalEmulatorSaves();
-
-            // 2. Fetch the master list from the official Steam API
             await FetchAndPopulateSteamData();
 
             this.Text = $"{game.Name} - Achievement Progress";
@@ -100,11 +96,9 @@ namespace AchievementTracker
             string appId = game.AppId;
             string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
 
-            // Check Goldberg Saves
             string goldbergPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId, "achievements.json");
             ReadGoldbergState(goldbergPath);
 
-            // Check CODEX, RUNE, FLT, OnlineFix Saves
             string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"OnlineFix" };
             foreach (string emu in emuFolders)
             {
@@ -113,7 +107,9 @@ namespace AchievementTracker
                 {
                     foreach (string file in Directory.GetFiles(emuDir, "*", SearchOption.AllDirectories))
                     {
-                        if (file.Contains("achievement") || file.Contains("stats"))
+                        // FIXED: Made this case-insensitive to catch "Achievements.ini"
+                        string lowerFile = file.ToLower();
+                        if (lowerFile.Contains("achievement") || lowerFile.Contains("stats"))
                             ReadIniState(file);
                     }
                 }
@@ -129,7 +125,6 @@ namespace AchievementTracker
                 using JsonDocument doc = JsonDocument.Parse(json);
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
-                    // Goldberg uses { "earned": true } or just simple booleans
                     bool isEarned = false;
                     if (prop.Value.ValueKind == JsonValueKind.Object && prop.Value.TryGetProperty("earned", out JsonElement earned))
                         isEarned = earned.GetBoolean();
@@ -150,11 +145,17 @@ namespace AchievementTracker
                 string currentSection = "";
                 foreach (string line in lines)
                 {
-                    string tLine = line.Trim();
-                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) currentSection = tLine.Substring(1, tLine.Length - 2);
-                    else if ((tLine == "Achieved=1" || tLine == "Unlocked=1" || tLine.EndsWith("=1")) && !string.IsNullOrEmpty(currentSection) && currentSection != "SteamAchievements")
+                    string originalLine = line.Trim();
+                    string tLine = originalLine.ToLower(); // Compare in lowercase!
+
+                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
                     {
-                        string achKey = tLine.Contains("=") && tLine.Split('=')[0] != "Achieved" && tLine.Split('=')[0] != "Unlocked" ? tLine.Split('=')[0] : currentSection;
+                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
+                    }
+                    // FIXED: Now checks for achieved=true as well as achieved=1
+                    else if ((tLine == "achieved=1" || tLine == "unlocked=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine == "unlocked=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
+                    {
+                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" && tLine.Split('=')[0] != "unlocked" ? originalLine.Split('=')[0] : currentSection;
                         unlockedAchievements.Add(achKey);
                     }
                 }
@@ -188,12 +189,10 @@ namespace AchievementTracker
                             string internalName = ach.GetProperty("name").GetString() ?? "";
                             string displayName = ach.GetProperty("displayName").GetString() ?? "Unknown";
                             
-                            // Handle descriptions gracefully (some achievements don't have them)
                             string description = "";
                             if (ach.TryGetProperty("description", out JsonElement descElement))
                                 description = descElement.GetString() ?? "";
 
-                            // Hidden secrets are usually "hidden": 1
                             bool isHidden = false;
                             if (ach.TryGetProperty("hidden", out JsonElement hiddenElement))
                                 isHidden = hiddenElement.GetInt32() == 1;
@@ -204,40 +203,38 @@ namespace AchievementTracker
 
                             ListViewItem item = new ListViewItem(displayName);
                             
-                            // Format the item based on Steam's logic
                             if (isUnlocked)
                             {
                                 item.SubItems.Add(description);
                                 item.SubItems.Add("✓ Unlocked");
                                 item.ForeColor = Color.LightGreen;
-                                item.Group = achievementListView.Groups[0]; // Unlocked Group
+                                item.Group = achievementListView.Groups[0]; 
                             }
                             else if (isHidden)
                             {
                                 item.SubItems.Add("Hidden Achievement - Keep playing to reveal!");
                                 item.SubItems.Add("Locked");
                                 item.ForeColor = Color.Gray;
-                                item.Group = achievementListView.Groups[2]; // Hidden Group
+                                item.Group = achievementListView.Groups[2]; 
                             }
                             else
                             {
                                 item.SubItems.Add(description);
                                 item.SubItems.Add("Locked");
                                 item.ForeColor = Color.LightGray;
-                                item.Group = achievementListView.Groups[1]; // Locked Group
+                                item.Group = achievementListView.Groups[1]; 
                             }
 
                             achievementListView.Items.Add(item);
                         }
                         
-                        // Update the UI header to show progress!
                         this.Text = $"{game.Name} - Progress: {unlockedCount} / {totalCount} Achievements";
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to connect to Steam. Ensure your API Key is correct.\n\nError: {ex.Message}", "Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Failed to connect to Steam.\n\nError: {ex.Message}", "Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }

@@ -48,9 +48,14 @@ namespace AchievementTracker
             };
 
             trayIcon.DoubleClick += (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } };
+
             trayIcon.ContextMenuStrip.Items.Add("Open Dashboard", null, (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } });
             trayIcon.ContextMenuStrip.Items.Add("-"); 
-            trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) => { if (trayIcon != null) trayIcon.Visible = false; Environment.Exit(0); });
+            trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) =>
+            {
+                if (trayIcon != null) trayIcon.Visible = false;
+                Environment.Exit(0); 
+            });
         }
 
         public static void UpdateWatchers(List<TrackedGame> games)
@@ -66,14 +71,13 @@ namespace AchievementTracker
 
             foreach (var game in games)
             {
-                // 1. WATCH GOLDBERG (JSON)
+                // 1. WATCH GOLDBERG
                 string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", game.AppId);
                 Directory.CreateDirectory(goldbergDir); 
                 LoadGoldbergBaseline(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
                 AttachWatcher(goldbergDir, "*.json", (s, e) => OnGoldbergFileChanged(s, e, game.AppId));
 
-                // 2. WATCH PUBLIC DOCUMENT EMULATORS (INI)
-                // This covers CODEX, RUNE, FLT, and OnlineFix!
+                // 2. WATCH INI EMULATORS (CODEX, RUNE, FLT, OnlineFix)
                 string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"OnlineFix" };
                 
                 foreach (string emu in emuFolders)
@@ -81,14 +85,16 @@ namespace AchievementTracker
                     string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
                     Directory.CreateDirectory(emuDir);
 
-                    // Load baseline state so we don't popup old achievements
                     string iniPath = Path.Combine(emuDir, "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
-                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); // Old CODEX style
+                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
+                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "Stats", "Achievements"); 
+                    
                     ParseIni(game.AppId, iniPath, isBaseline: true);
 
                     AttachWatcher(emuDir, "*", (s, e) => {
-                        if (e.Name.Contains("achievement") || e.Name.Contains("stats")) 
+                        string lowerName = e.Name.ToLower();
+                        if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
                             ParseIni(game.AppId, e.FullPath, isBaseline: false);
                     });
                 }
@@ -107,7 +113,6 @@ namespace AchievementTracker
             activeWatchers.Add(watcher);
         }
 
-        // --- GOLDBERG JSON PARSER ---
         static void LoadGoldbergBaseline(string appId, string filePath)
         {
             if (!File.Exists(filePath)) return;
@@ -149,17 +154,16 @@ namespace AchievementTracker
         static bool ExtractGoldbergStatus(JsonElement element)
         {
             if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("earned", out JsonElement earned)) return earned.GetBoolean(); 
-            else if (element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False) return element.GetBoolean(); 
+            else if (element.ValueKind == JsonValueKind.True) return true; 
             return false;
         }
 
-        // --- UNIVERSAL INI PARSER (CODEX, RUNE, FLT, OnlineFix) ---
         static void ParseIni(string appId, string filePath, bool isBaseline)
         {
             if (!File.Exists(filePath)) return;
             try
             {
-                Thread.Sleep(50); // Prevent file locks
+                Thread.Sleep(50);
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
                 string line;
@@ -167,12 +171,16 @@ namespace AchievementTracker
 
                 while ((line = sr.ReadLine()) != null)
                 {
-                    line = line.Trim();
-                    if (line.StartsWith("[") && line.EndsWith("]")) currentSection = line.Substring(1, line.Length - 2);
-                    else if ((line == "Achieved=1" || line == "Unlocked=1" || line.EndsWith("=1")) && !string.IsNullOrEmpty(currentSection) && currentSection != "SteamAchievements")
+                    string originalLine = line.Trim();
+                    string tLine = originalLine.ToLower();
+
+                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
                     {
-                        // Some emulators put the achievement code as the section, some put it as the key. We handle both.
-                        string achKey = line.Contains("=") && line.Split('=')[0] != "Achieved" && line.Split('=')[0] != "Unlocked" ? line.Split('=')[0] : currentSection;
+                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
+                    }
+                    else if ((tLine == "achieved=1" || tLine == "unlocked=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine == "unlocked=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
+                    {
+                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" && tLine.Split('=')[0] != "unlocked" ? originalLine.Split('=')[0] : currentSection;
                         string stateKey = appId + "_" + achKey; 
 
                         if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
@@ -185,7 +193,6 @@ namespace AchievementTracker
             } catch { }
         }
 
-        // --- API & DISPLAY LOGIC ---
         static string GetDisplayName(string appId, string internalKey)
         {
             string lookupKey = appId + "_" + internalKey;
