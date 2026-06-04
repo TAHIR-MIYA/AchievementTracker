@@ -47,14 +47,12 @@ namespace AchievementTracker
             this.BackColor = steamBg;
             this.ForeColor = steamText;
             
-            // ALLOW RESIZING AND MAXIMIZING
             this.FormBorderStyle = FormBorderStyle.Sizable; 
             this.MaximizeBox = true; 
             
             this.StartPosition = FormStartPosition.CenterScreen;
             if (File.Exists("app_icon.ico")) this.Icon = new Icon("app_icon.ico");
 
-            // Force dark title bar
             if (Environment.OSVersion.Version.Major >= 10)
                 DwmSetWindowAttribute(this.Handle, 20, new[] { 1 }, 4);
 
@@ -65,13 +63,11 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
-            // Header
             Panel headerPanel = new Panel { Size = new Size(600, 60), BackColor = steamPanel, Location = new Point(0, 0), Dock = DockStyle.Top };
             Label titleLabel = new Label { Text = "LIBRARY", Font = new Font("Segoe UI", 16, FontStyle.Bold), ForeColor = steamBlue, Location = new Point(20, 15), AutoSize = true };
             headerPanel.Controls.Add(titleLabel);
             this.Controls.Add(headerPanel);
 
-            // Left Side - Game List
             Label listLabel = new Label { Text = "GAMES", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White };
             this.Controls.Add(listLabel);
 
@@ -85,7 +81,6 @@ namespace AchievementTracker
                 BorderStyle = BorderStyle.None,
                 DrawMode = DrawMode.OwnerDrawFixed,
                 ItemHeight = 35,
-                // Stretch list up, down, left, and right
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right 
             };
             gameList.DrawItem += GameList_DrawItem;
@@ -94,11 +89,10 @@ namespace AchievementTracker
             this.Controls.Add(gameList);
 
             Button removeButton = CreateStyledButton("Remove Selected Game", new Point(20, 350), new Size(240, 30), ColorTranslator.FromHtml("#3d4450"), Color.White);
-            removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; // Stick to bottom left
+            removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; 
             removeButton.Click += RemoveButton_Click;
             this.Controls.Add(removeButton);
 
-            // Right Side - Add Game Form
             Label addLabel = new Label { Text = "ADD A GAME", Location = new Point(290, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             this.Controls.Add(addLabel);
 
@@ -115,7 +109,7 @@ namespace AchievementTracker
             this.Controls.Add(appIdInput);
 
             Button addButton = CreateStyledButton("Add to Tracker", new Point(290, 225), new Size(260, 35), steamButtonBg, steamBlue);
-            addButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; // Stick to top right
+            addButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; 
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
 
@@ -136,7 +130,7 @@ namespace AchievementTracker
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Segoe UI", 9),
                 Text = SavedApiKey,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right // Stretch width
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right 
             };
             footerPanel.Controls.Add(apiInput);
 
@@ -165,13 +159,13 @@ namespace AchievementTracker
             return btn;
         }
 
-        private void GameList_DrawItem(object sender, DrawItemEventArgs e)
+        private void GameList_DrawItem(object? sender, DrawItemEventArgs e)
         {
-            if (e.Index < 0) return;
+            if (e.Index < 0 || gameList.Items.Count == 0) return;
             bool isSelected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
             
-            e.Graphics.FillRectangle(new SolidBrush(isSelected ? steamButtonBg : steamPanel), e.Bounds);
-            e.Graphics.DrawString(gameList.Items[e.Index].ToString(), gameList.Font, new SolidBrush(isSelected ? Color.White : steamText), e.Bounds.X + 10, e.Bounds.Y + 8);
+            e.Graphics?.FillRectangle(new SolidBrush(isSelected ? steamButtonBg : steamPanel), e.Bounds);
+            e.Graphics?.DrawString(gameList.Items[e.Index].ToString(), gameList.Font, new SolidBrush(isSelected ? Color.White : steamText), e.Bounds.X + 10, e.Bounds.Y + 8);
         }
 
         private void GameList_DoubleClick(object? sender, EventArgs e)

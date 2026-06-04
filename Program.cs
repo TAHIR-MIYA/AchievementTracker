@@ -44,7 +44,7 @@ namespace AchievementTracker
         {
             trayIcon = new NotifyIcon()
             {
-                Icon = new Icon("app_icon.ico"),
+                Icon = File.Exists("app_icon.ico") ? new Icon("app_icon.ico") : SystemIcons.Application,
                 ContextMenuStrip = new ContextMenuStrip(),
                 Visible = true,
                 Text = "Universal Achievement Tracker"
@@ -97,8 +97,8 @@ namespace AchievementTracker
                     ParseIniForBaseline(game.AppId, iniPath);
 
                     // Watch the whole directory including subfolders to catch everything
-                    AttachWatcher(emuDir, "*", (s, e) => {
-                        string lowerName = e.Name.ToLower();
+                    AttachWatcher(emuDir, "*.*", (s, e) => {
+                        string lowerName = e.Name?.ToLower() ?? "";
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
                             ParseIniForChanges(game.AppId, e.FullPath);
                     });
@@ -123,12 +123,21 @@ namespace AchievementTracker
             if (!File.Exists(filePath)) return;
             try
             {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var sr = new StreamReader(fs);
-                using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
-                foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
+                // Basic retry logic for file locks
+                for (int i = 0; i < 3; i++)
                 {
-                    if (ExtractAchievementStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
+                    try
+                    {
+                        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        using var sr = new StreamReader(fs);
+                        using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
+                        foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
+                        {
+                            if (ExtractAchievementStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
+                        }
+                        break;
+                    }
+                    catch { Thread.Sleep(50); }
                 }
             } catch { }
         }
@@ -152,6 +161,11 @@ namespace AchievementTracker
                         previousState[stateKey] = true; 
                         TriggerUI(appId, achKey);
                     }
+                    else if (!isEarned && previousState.ContainsKey(stateKey))
+                    {
+                        // Delete from memory so you can re-test it using Notepad!
+                        previousState[stateKey] = false; 
+                    }
                 }
             } catch { }
         }
@@ -170,7 +184,7 @@ namespace AchievementTracker
             {
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
-                string line;
+                string? line;
                 string currentSection = "";
 
                 while ((line = sr.ReadLine()) != null)
@@ -196,7 +210,7 @@ namespace AchievementTracker
             {
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
-                string line;
+                string? line;
                 string currentSection = "";
 
                 while ((line = sr.ReadLine()) != null)
@@ -217,6 +231,14 @@ namespace AchievementTracker
                             TriggerUI(appId, achKey);
                         }
                     }
+                    else if ((tLine == "achieved=0" || tLine.EndsWith("=0") || tLine == "achieved=false" || tLine.EndsWith("=false")) && !string.IsNullOrEmpty(currentSection))
+                    {
+                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
+                        string stateKey = appId + "_" + achKey; 
+                        
+                        // Delete from memory so you can re-test it using Notepad!
+                        previousState[stateKey] = false; 
+                    }
                 }
             } catch { }
         }
@@ -232,7 +254,6 @@ namespace AchievementTracker
 
         static void LoadTranslator()
         {
-            // Load Names
             if (File.Exists(dictionaryPath)) {
                 try {
                     string json = File.ReadAllText(dictionaryPath);
@@ -240,7 +261,6 @@ namespace AchievementTracker
                 } catch { achievementNames = new Dictionary<string, string>(); }
             }
             
-            // Load Icons
             if (File.Exists(iconsPath)) {
                 try {
                     string json = File.ReadAllText(iconsPath);
@@ -291,6 +311,7 @@ namespace AchievementTracker
 
         static void ShowPopup(string achievementName, string iconUrl)
         {
+            // The magic UI thread routing!
             Thread uiThread = new Thread(() =>
             {
                 OverlayWindow window = new OverlayWindow(achievementName, iconUrl);
