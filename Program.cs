@@ -44,7 +44,7 @@ namespace AchievementTracker
         {
             trayIcon = new NotifyIcon()
             {
-                Icon = SystemIcons.Application,
+                Icon = new Icon("app_icon.ico"),
                 ContextMenuStrip = new ContextMenuStrip(),
                 Visible = true,
                 Text = "Universal Achievement Tracker"

@@ -52,6 +52,7 @@ namespace AchievementTracker
             this.MaximizeBox = true; 
             
             this.StartPosition = FormStartPosition.CenterScreen;
+            if (File.Exists("app_icon.ico")) this.Icon = new Icon("app_icon.ico");
 
             // Force dark title bar
             if (Environment.OSVersion.Version.Major >= 10)
