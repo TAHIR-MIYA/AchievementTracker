@@ -41,8 +41,10 @@ namespace AchievementTracker
             this.BackColor = steamBg;
             this.ForeColor = steamText;
             this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
+            
+            // ALLOW RESIZING AND MAXIMIZING
+            this.FormBorderStyle = FormBorderStyle.Sizable; 
+            this.MaximizeBox = true; 
 
             if (Environment.OSVersion.Version.Major >= 10)
                 DwmSetWindowAttribute(this.Handle, 20, new[] { 1 }, 4);
@@ -53,8 +55,8 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
-            // Top Banner Area
-            Panel bannerPanel = new Panel { Size = new Size(750, 100), BackColor = steamPanel, Location = new Point(0, 0) };
+            // Top Banner Area (Dock to Top)
+            Panel bannerPanel = new Panel { Size = new Size(750, 100), BackColor = steamPanel, Location = new Point(0, 0), Dock = DockStyle.Top };
             
             Label titleLabel = new Label
             {
@@ -82,7 +84,10 @@ namespace AchievementTracker
                 View = View.Details,
                 FullRowSelect = true,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                BorderStyle = BorderStyle.None
+                BorderStyle = BorderStyle.None,
+                
+                // STRETCH LIST TO FILL WINDOW
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right 
             };
 
             achievementListView.Columns.Add("Achievement Name", 220);

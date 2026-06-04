@@ -38,7 +38,6 @@ namespace AchievementTracker
         private Color steamText = ColorTranslator.FromHtml("#c7d5e0");
         private Color steamBlue = ColorTranslator.FromHtml("#66c0f4");
         private Color steamButtonBg = ColorTranslator.FromHtml("#2a475e");
-        private Color steamButtonHover = ColorTranslator.FromHtml("#66c0f4");
         private Color steamGreen = ColorTranslator.FromHtml("#5c7e10");
 
         public MainWindow()
@@ -47,8 +46,11 @@ namespace AchievementTracker
             this.Size = new Size(600, 480); 
             this.BackColor = steamBg;
             this.ForeColor = steamText;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
+            
+            // ALLOW RESIZING AND MAXIMIZING
+            this.FormBorderStyle = FormBorderStyle.Sizable; 
+            this.MaximizeBox = true; 
+            
             this.StartPosition = FormStartPosition.CenterScreen;
 
             // Force dark title bar
@@ -63,7 +65,7 @@ namespace AchievementTracker
         private void InitializeUI()
         {
             // Header
-            Panel headerPanel = new Panel { Size = new Size(600, 60), BackColor = steamPanel, Location = new Point(0, 0) };
+            Panel headerPanel = new Panel { Size = new Size(600, 60), BackColor = steamPanel, Location = new Point(0, 0), Dock = DockStyle.Top };
             Label titleLabel = new Label { Text = "LIBRARY", Font = new Font("Segoe UI", 16, FontStyle.Bold), ForeColor = steamBlue, Location = new Point(20, 15), AutoSize = true };
             headerPanel.Controls.Add(titleLabel);
             this.Controls.Add(headerPanel);
@@ -81,7 +83,9 @@ namespace AchievementTracker
                 Font = new Font("Segoe UI", 11),
                 BorderStyle = BorderStyle.None,
                 DrawMode = DrawMode.OwnerDrawFixed,
-                ItemHeight = 35
+                ItemHeight = 35,
+                // Stretch list up, down, left, and right
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right 
             };
             gameList.DrawItem += GameList_DrawItem;
             gameList.DoubleClick += GameList_DoubleClick;
@@ -89,32 +93,37 @@ namespace AchievementTracker
             this.Controls.Add(gameList);
 
             Button removeButton = CreateStyledButton("Remove Selected Game", new Point(20, 350), new Size(240, 30), ColorTranslator.FromHtml("#3d4450"), Color.White);
+            removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; // Stick to bottom left
             removeButton.Click += RemoveButton_Click;
             this.Controls.Add(removeButton);
 
             // Right Side - Add Game Form
-            Label addLabel = new Label { Text = "ADD A GAME", Location = new Point(290, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White };
+            Label addLabel = new Label { Text = "ADD A GAME", Location = new Point(290, 75), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.White, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             this.Controls.Add(addLabel);
 
-            Label nameLabel = new Label { Text = "Game Name:", Location = new Point(290, 105), AutoSize = true };
+            Label nameLabel = new Label { Text = "Game Name:", Location = new Point(290, 105), AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             this.Controls.Add(nameLabel);
             nameInput = CreateStyledTextBox(new Point(290, 125));
+            nameInput.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             this.Controls.Add(nameInput);
 
-            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(290, 160), AutoSize = true };
+            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(290, 160), AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             this.Controls.Add(appIdLabel);
             appIdInput = CreateStyledTextBox(new Point(290, 180));
+            appIdInput.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             this.Controls.Add(appIdInput);
 
             Button addButton = CreateStyledButton("Add to Tracker", new Point(290, 225), new Size(260, 35), steamButtonBg, steamBlue);
+            addButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; // Stick to top right
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
 
             Button autoDetectButton = CreateStyledButton("🔍 Auto-Detect (.exe)", new Point(290, 270), new Size(260, 35), steamPanel, steamText);
+            autoDetectButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             autoDetectButton.Click += AutoDetectBtn_Click;
             this.Controls.Add(autoDetectButton);
 
-            Panel footerPanel = new Panel { Size = new Size(600, 70), BackColor = steamPanel, Location = new Point(0, 400) };
+            Panel footerPanel = new Panel { Size = new Size(600, 70), BackColor = steamPanel, Location = new Point(0, 400), Dock = DockStyle.Bottom };
             Label apiLabel = new Label { Text = "Steam Developer API Key:", Location = new Point(20, 10), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
             footerPanel.Controls.Add(apiLabel);
             
@@ -125,11 +134,13 @@ namespace AchievementTracker
                 ForeColor = Color.White, 
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Segoe UI", 9),
-                Text = SavedApiKey 
+                Text = SavedApiKey,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right // Stretch width
             };
             footerPanel.Controls.Add(apiInput);
 
             Button saveApiButton = CreateStyledButton("Save Key", new Point(410, 26), new Size(140, 28), steamGreen, Color.White);
+            saveApiButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             saveApiButton.Click += SaveApiButton_Click;
             footerPanel.Controls.Add(saveApiButton);
             this.Controls.Add(footerPanel);
@@ -232,6 +243,10 @@ namespace AchievementTracker
                         nameInput.Text = potentialName; appIdInput.Text = detectedAppId;
                         MessageBox.Show($"App ID {detectedAppId} found! Click Add.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
+                    else
+                    {
+                        MessageBox.Show("Could not find a configuration file with an App ID.", "Detection Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
                 }
             }
         }
@@ -276,6 +291,7 @@ namespace AchievementTracker
         }
 
         private void SaveGames() => File.WriteAllText(gamesFilePath, JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true }));
+        
         private void RefreshGameListUI()
         {
             gameList.Items.Clear();
