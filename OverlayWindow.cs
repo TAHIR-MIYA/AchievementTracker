@@ -5,15 +5,26 @@ using System.Media;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.IO;
-using System.Runtime.InteropServices; // <-- ADD THIS LINE
+using System.Runtime.InteropServices;
 
 namespace AchievementTracker
 {
     public class OverlayWindow : Form
     {
-        // <-- ADD THIS SPECIAL WINDOWS MEDIA PLAYER CODE -->
+        // 1. Audio API
         [DllImport("winmm.dll")]
         private static extern long mciSendString(string command, string returnString, int returnLength, IntPtr hwndCallback);
+
+        // 2. Rounded Corners API (PS5 Style)
+        [DllImport("Gdi32.dll", EntryPoint = "CreateRoundRectRgn")]
+        private static extern IntPtr CreateRoundRectRgn(
+            int nLeftRect,     
+            int nTopRect,      
+            int nRightRect,    
+            int nBottomRect,   
+            int nWidthEllipse, 
+            int nHeightEllipse 
+        );
 
         private System.Windows.Forms.Timer animationTimer = new System.Windows.Forms.Timer();
         private int targetY;
@@ -28,8 +39,13 @@ namespace AchievementTracker
             this.ShowInTaskbar = false;                  
             this.StartPosition = FormStartPosition.Manual;
 
-            this.BackColor = Color.Magenta;
-            this.TransparencyKey = Color.Magenta;
+            // PS5 Dark Theme
+            this.BackColor = Color.FromArgb(20, 20, 20);
+            this.ForeColor = Color.White;
+            this.Size = new Size(340, 75);
+            
+            // Apply PS5-style rounded corners
+            this.Region = System.Drawing.Region.FromHrgn(CreateRoundRectRgn(0, 0, Width, Height, 25, 25));
 
             var screen = Screen.PrimaryScreen;
             if (screen == null)
@@ -38,56 +54,43 @@ namespace AchievementTracker
                  return;
             }
 
+            // PS5 Positioning (Top Right)
             int screenWidth = screen.Bounds.Width;
-            int screenHeight = screen.Bounds.Height;
-            this.Size = new Size(380, 80);
-            
-            targetY = screenHeight - 160; 
-            currentY = screenHeight;      
-            this.Location = new Point((screenWidth - this.Width) / 2, currentY);
+            targetY = 40;  // Final resting place (40px from top)
+            currentY = -100; // Start hidden above the screen
+            this.Location = new Point(screenWidth - this.Width - 40, currentY);
 
-            Panel notificationBox = new Panel
-            {
-                Size = new Size(380, 80),
-                BackColor = Color.FromArgb(30, 30, 30), 
-                ForeColor = Color.White
-            };
-            
-            Panel accentStripe = new Panel { Size = new Size(5, 80), BackColor = Color.DeepSkyBlue, Dock = DockStyle.Left };
-            notificationBox.Controls.Add(accentStripe);
-
-            // The New Image Box
+            // PS5 Layout
             PictureBox iconBox = new PictureBox
             {
-                Size = new Size(50, 50),
-                Location = new Point(20, 15),
+                Size = new Size(45, 45),
+                Location = new Point(15, 15),
                 SizeMode = PictureBoxSizeMode.StretchImage,
-                BackColor = Color.FromArgb(45, 45, 48) // Placeholder color
+                BackColor = Color.FromArgb(30, 30, 30) // Dark placeholder
             };
-            notificationBox.Controls.Add(iconBox);
+            this.Controls.Add(iconBox);
 
-            Label titleLabel = new Label
+            Label topLabel = new Label
             {
-                Text = "🏆 Achievement Unlocked!",
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Location = new Point(80, 15),
-                AutoSize = true
+                Text = "Trophy earned!",
+                Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                Location = new Point(70, 15),
+                AutoSize = true,
+                ForeColor = Color.LightGray
             };
-            notificationBox.Controls.Add(titleLabel);
+            this.Controls.Add(topLabel);
 
             Label nameLabel = new Label
             {
                 Text = achievementName,
-                Font = new Font("Segoe UI", 12, FontStyle.Regular),
-                Location = new Point(80, 40),
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Location = new Point(70, 35),
                 AutoSize = true,
-                ForeColor = Color.LightGray
+                ForeColor = Color.White
             };
-            notificationBox.Controls.Add(nameLabel);
+            this.Controls.Add(nameLabel);
 
-            this.Controls.Add(notificationBox);
-
-            // Fetch the image if a URL was provided
+            // Fetch the image
             if (!string.IsNullOrEmpty(iconUrl))
             {
                 _ = LoadIconAsync(iconUrl, iconBox);
@@ -95,6 +98,7 @@ namespace AchievementTracker
 
             PlayNotificationSound();
 
+            // Setup smooth animation
             animationTimer.Interval = 15; 
             animationTimer.Tick += AnimationTick; 
             animationTimer.Start();
@@ -119,33 +123,33 @@ namespace AchievementTracker
 
         private void AnimationTick(object? sender, EventArgs e)
         {
+            // State 0: Sliding DOWN from the top
             if (animationState == 0) 
             {
-                currentY -= 12; 
-                if (currentY <= targetY)
+                currentY += 10; // Speed of slide
+                if (currentY >= targetY)
                 {
                     currentY = targetY;
                     animationState = 1; 
                 }
                 this.Location = new Point(this.Location.X, currentY);
             }
+            // State 1: Holding on screen
             else if (animationState == 1) 
             {
                 holdCounter += 15;
-                if (holdCounter >= 5000) 
+                if (holdCounter >= 5000) // Hold for 5 seconds
                 {
                     animationState = 2; 
                 }
             }
+            // State 2: Sliding UP off the screen
             else if (animationState == 2) 
             {
-                currentY += 12; 
+                currentY -= 10; 
                 this.Location = new Point(this.Location.X, currentY);
-                
-                var screen = Screen.PrimaryScreen;
-                int screenHeight = screen != null ? screen.Bounds.Height : 1080;
 
-                if (currentY >= screenHeight) 
+                if (currentY <= -100) 
                 {
                     animationTimer.Stop();
                     this.Close(); 
@@ -157,14 +161,12 @@ namespace AchievementTracker
         {
             try 
             {
-                // 1. Check for MP3 first!
                 if (File.Exists("unlock.mp3"))
                 {
                     mciSendString("close unlockSound", null, 0, IntPtr.Zero); 
                     mciSendString("open \"unlock.mp3\" type mpegvideo alias unlockSound", null, 0, IntPtr.Zero);
                     mciSendString("play unlockSound", null, 0, IntPtr.Zero);
                 }
-                // 2. Fallback to WAV
                 else if (File.Exists("unlock.wav"))
                 {
                     using (SoundPlayer player = new SoundPlayer("unlock.wav"))
@@ -172,7 +174,6 @@ namespace AchievementTracker
                         player.Play();
                     }
                 }
-                // 3. Fallback to Windows default ding
                 else
                 {
                     SystemSounds.Exclamation.Play(); 
