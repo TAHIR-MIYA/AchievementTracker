@@ -6,7 +6,6 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -37,12 +36,10 @@ namespace AchievementTracker
             this.apiKey = apiKey;
 
             this.Text = $"{game.Name} - Activity";
-            this.Size = new Size(750, 600);
+            this.Size = new Size(850, 650);
             this.BackColor = steamBg;
             this.ForeColor = steamText;
             this.StartPosition = FormStartPosition.CenterParent;
-            
-            // ALLOW RESIZING AND MAXIMIZING
             this.FormBorderStyle = FormBorderStyle.Sizable; 
             this.MaximizeBox = true; 
 
@@ -55,8 +52,8 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
-            // Top Banner Area (Dock to Top)
-            Panel bannerPanel = new Panel { Size = new Size(750, 100), BackColor = steamPanel, Location = new Point(0, 0), Dock = DockStyle.Top };
+            // Top Banner Area
+            Panel bannerPanel = new Panel { Size = new Size(850, 100), BackColor = steamPanel, Dock = DockStyle.Top };
             
             Label titleLabel = new Label
             {
@@ -67,7 +64,7 @@ namespace AchievementTracker
 
             progressLabel = new Label
             {
-                Text = "Calculating progress...", Font = new Font("Segoe UI", 10),
+                Text = "Calculating progress...", Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 Location = new Point(24, 65), AutoSize = true, ForeColor = steamBlue
             };
             bannerPanel.Controls.Add(progressLabel);
@@ -77,48 +74,43 @@ namespace AchievementTracker
             achievementListView = new ListView
             {
                 Location = new Point(20, 120),
-                Size = new Size(690, 420),
+                Size = new Size(790, 470),
                 BackColor = steamBg,
                 ForeColor = steamText,
                 Font = new Font("Segoe UI", 10),
                 View = View.Details,
                 FullRowSelect = true,
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                BorderStyle = BorderStyle.None,
                 
-                // STRETCH LIST TO FILL WINDOW
+                // THIS HIDES THE UGLY WHITE BAR:
+                HeaderStyle = ColumnHeaderStyle.None, 
+                BorderStyle = BorderStyle.None,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right 
             };
 
-            achievementListView.Columns.Add("Achievement Name", 220);
-            achievementListView.Columns.Add("Description", 350);
-            achievementListView.Columns.Add("Status", 100);
+            // Set up columns with better default spacing
+            achievementListView.Columns.Add("Achievement Name", 250);
+            achievementListView.Columns.Add("Description", 400);
+            achievementListView.Columns.Add("Status", 120);
 
-            // Set up image list for icons
+            // DYNAMIC RESIZING: Make the description column stretch to fill the screen
+            this.Resize += (s, e) => {
+                if (achievementListView.Columns.Count >= 3) {
+                    // Calculate remaining space and stretch the middle column
+                    int remainingWidth = achievementListView.Width - achievementListView.Columns[0].Width - achievementListView.Columns[2].Width - 25;
+                    achievementListView.Columns[1].Width = Math.Max(200, remainingWidth);
+                }
+            };
+
             achievementIcons.ImageSize = new Size(48, 48);
             achievementIcons.ColorDepth = ColorDepth.Depth32Bit;
             achievementListView.SmallImageList = achievementIcons;
-
-            // Set up Steam-style groups
-            ListViewGroup grpUnlocked = new ListViewGroup("Unlocked Achievements");
-            ListViewGroup grpLocked = new ListViewGroup("Locked Achievements");
-            ListViewGroup grpHidden = new ListViewGroup("Hidden Achievements");
-
-            achievementListView.Groups.Add(grpUnlocked);
-            achievementListView.Groups.Add(grpLocked);
-            achievementListView.Groups.Add(grpHidden);
 
             this.Controls.Add(achievementListView);
         }
 
         private async void LoadAchievementsAsync()
         {
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                MessageBox.Show("Please save your Steam API Key in the dashboard to view achievements.", "API Key Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                this.Close(); return;
-            }
-
+            if (string.IsNullOrWhiteSpace(apiKey)) return;
             ScanLocalEmulatorSaves();
             await FetchAndPopulateSteamData();
         }
@@ -197,6 +189,11 @@ namespace AchievementTracker
                         int unlockedCount = 0; int totalCount = 0;
                         achievementListView.Items.Clear();
 
+                        // Create temporary lists to sort them nicely without using buggy Windows Groups
+                        List<ListViewItem> unlockedItems = new List<ListViewItem>();
+                        List<ListViewItem> lockedItems = new List<ListViewItem>();
+                        List<ListViewItem> hiddenItems = new List<ListViewItem>();
+
                         foreach (JsonElement ach in achievementsElement.EnumerateArray())
                         {
                             totalCount++;
@@ -212,32 +209,30 @@ namespace AchievementTracker
                             if (isUnlocked) unlockedCount++;
 
                             ListViewItem item = new ListViewItem(displayName);
+                            item.Font = new Font("Segoe UI", 11, FontStyle.Bold); // Make titles bolder
                             
                             if (isUnlocked)
                             {
                                 item.SubItems.Add(description);
                                 item.SubItems.Add("✓ Unlocked");
                                 item.ForeColor = steamBlue; 
-                                item.Group = achievementListView.Groups[0]; 
+                                unlockedItems.Add(item);
                             }
                             else if (isHidden)
                             {
                                 item.SubItems.Add("Hidden Achievement - Keep playing to reveal!");
                                 item.SubItems.Add("Locked");
                                 item.ForeColor = Color.DimGray;
-                                item.Group = achievementListView.Groups[2]; 
+                                hiddenItems.Add(item);
                             }
                             else
                             {
                                 item.SubItems.Add(description);
                                 item.SubItems.Add("Locked");
-                                item.ForeColor = Color.Gray;
-                                item.Group = achievementListView.Groups[1]; 
+                                item.ForeColor = steamText;
+                                lockedItems.Add(item);
                             }
 
-                            achievementListView.Items.Add(item);
-
-                            // Trigger async image download
                             string targetIconUrl = isUnlocked ? iconUrl : iconGrayUrl;
                             if (!string.IsNullOrEmpty(targetIconUrl))
                             {
@@ -246,7 +241,15 @@ namespace AchievementTracker
                             }
                         }
                         
+                        // Add them to the list in order: Unlocked first, then locked, then hidden
+                        achievementListView.Items.AddRange(unlockedItems.ToArray());
+                        achievementListView.Items.AddRange(lockedItems.ToArray());
+                        achievementListView.Items.AddRange(hiddenItems.ToArray());
+                        
                         progressLabel.Text = $"{unlockedCount} / {totalCount} ACHIEVEMENTS EARNED";
+                        
+                        // Trigger a resize to fill the screen correctly right at launch
+                        this.OnResize(EventArgs.Empty); 
                     }
                 }
             }
@@ -261,7 +264,6 @@ namespace AchievementTracker
                 using MemoryStream ms = new MemoryStream(imageBytes);
                 Image img = Image.FromStream(ms);
                 
-                // We must update UI elements on the main UI thread
                 this.Invoke(new Action(() => {
                     if (!achievementIcons.Images.ContainsKey(key))
                     {
@@ -270,7 +272,7 @@ namespace AchievementTracker
                     item.ImageKey = key;
                 }));
             }
-            catch { } // Silently ignore failed image downloads
+            catch { }
         }
     }
 }
