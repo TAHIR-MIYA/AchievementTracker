@@ -2,5 +2,9 @@
   {
     "Name": "My Test Game",
     "AppId": "99999"
+  },
+  {
+    "Name": "Hollow Knight",
+    "AppId": "367520"
   }
 ]

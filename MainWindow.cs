@@ -18,28 +18,31 @@ namespace AchievementTracker
         private ListBox gameList = new ListBox();
         private TextBox nameInput = new TextBox();
         private TextBox appIdInput = new TextBox();
+        private TextBox apiInput = new TextBox(); 
+        
         private List<TrackedGame> games = new List<TrackedGame>();
         private string gamesFilePath = "tracked_games.json";
+        private string settingsFilePath = "app_settings.json"; 
+
+        public string SavedApiKey { get; private set; } = "";
 
         public MainWindow()
         {
             this.Text = "Universal Achievement Tracker";
-            this.Size = new Size(500, 350);
+            this.Size = new Size(500, 420); 
             this.BackColor = Color.FromArgb(30, 30, 30);
             this.ForeColor = Color.White;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
 
-            // Load saved games from hard drive
             LoadGames();
-
+            LoadSettings(); 
             InitializeUI();
         }
 
         private void InitializeUI()
         {
-            // --- Left Side: Game List ---
             Label listLabel = new Label { Text = "Tracked Games:", Location = new Point(20, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(listLabel);
 
@@ -55,8 +58,7 @@ namespace AchievementTracker
             RefreshGameListUI();
             this.Controls.Add(gameList);
 
-            // --- Right Side: Add New Game ---
-            Label addLabel = new Label { Text = "Add New Game (Goldberg)", Location = new Point(240, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+            Label addLabel = new Label { Text = "Add New Game", Location = new Point(240, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(addLabel);
 
             Label nameLabel = new Label { Text = "Game Name:", Location = new Point(240, 60), AutoSize = true };
@@ -64,7 +66,7 @@ namespace AchievementTracker
             nameInput = new TextBox { Location = new Point(240, 80), Size = new Size(200, 25), BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
             this.Controls.Add(nameInput);
 
-            Label appIdLabel = new Label { Text = "App ID (e.g. 123456):", Location = new Point(240, 115), AutoSize = true };
+            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(240, 115), AutoSize = true };
             this.Controls.Add(appIdLabel);
             appIdInput = new TextBox { Location = new Point(240, 135), Size = new Size(200, 25), BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
             this.Controls.Add(appIdInput);
@@ -82,6 +84,59 @@ namespace AchievementTracker
             addButton.FlatAppearance.BorderSize = 0;
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
+
+            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 300) };
+            this.Controls.Add(divider);
+
+            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 315), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            this.Controls.Add(apiLabel);
+            
+            apiInput = new TextBox { 
+                Location = new Point(20, 335), 
+                Size = new Size(300, 25), 
+                BackColor = Color.FromArgb(60, 60, 60), 
+                ForeColor = Color.White, 
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = SavedApiKey 
+            };
+            this.Controls.Add(apiInput);
+
+            Button saveApiButton = new Button
+            {
+                Text = "Save Key",
+                Location = new Point(330, 334),
+                Size = new Size(110, 27),
+                BackColor = Color.MediumSeaGreen,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            saveApiButton.FlatAppearance.BorderSize = 0;
+            saveApiButton.Click += SaveApiButton_Click;
+            this.Controls.Add(saveApiButton);
+        }
+
+        private void SaveApiButton_Click(object? sender, EventArgs e)
+        {
+            SavedApiKey = apiInput.Text.Trim();
+            File.WriteAllText(settingsFilePath, JsonSerializer.Serialize(new { SteamApiKey = SavedApiKey }));
+            MessageBox.Show("API Key Saved Successfully!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            
+            Program.TriggerDataDownload(games, SavedApiKey);
+        }
+
+        private void LoadSettings()
+        {
+            if (File.Exists(settingsFilePath))
+            {
+                try {
+                    string json = File.ReadAllText(settingsFilePath);
+                    using JsonDocument doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("SteamApiKey", out JsonElement keyElement))
+                    {
+                        SavedApiKey = keyElement.GetString() ?? "";
+                    }
+                } catch { }
+            }
         }
 
         private void AddButton_Click(object? sender, EventArgs e)
@@ -100,8 +155,8 @@ namespace AchievementTracker
             nameInput.Text = "";
             appIdInput.Text = "";
 
-            // Tell the core engine to update its watchers!
             Program.UpdateWatchers(games);
+            Program.TriggerDataDownload(games, SavedApiKey); 
             
             MessageBox.Show($"Started tracking {newGame.Name}!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -114,11 +169,9 @@ namespace AchievementTracker
                 {
                     string json = File.ReadAllText(gamesFilePath);
                     if (!string.IsNullOrWhiteSpace(json)) 
-                    {
                         games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
-                    }
                 }
-                catch { /* If the file is corrupted or empty, just ignore it and start fresh */ }
+                catch { games = new List<TrackedGame>(); }
             }
         }
 
@@ -137,18 +190,16 @@ namespace AchievementTracker
             }
         }
 
-        // When the user clicks the red X, we hide the window to the tray instead of quitting
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (e.CloseReason == CloseReason.UserClosing)
             {
-                e.Cancel = true; // Stop the window from actually destroying itself
-                this.Hide();     // Just make it invisible
+                e.Cancel = true;
+                this.Hide();     
             }
             base.OnFormClosing(e);
         }
         
-        // Let the engine fetch the games on startup
         public List<TrackedGame> GetTrackedGames() => games;
     }
 }

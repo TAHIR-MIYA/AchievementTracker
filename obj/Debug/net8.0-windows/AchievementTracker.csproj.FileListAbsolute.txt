@@ -12,3 +12,4 @@ D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\refint\AchievementTrac
 D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.pdb
 D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.genruntimeconfig.cache
 D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\ref\AchievementTracker.dll
+D:\TAHIR CODE\AchievementTracker\obj\Debug\net8.0-windows\AchievementTracker.sourcelink.json
