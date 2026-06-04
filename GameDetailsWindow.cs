@@ -23,6 +23,7 @@ namespace AchievementTracker
         private HashSet<string> unlockedAchievements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly HttpClient httpClient = new HttpClient();
         private Label progressLabel = new Label();
+        private ImageList achievementIcons = new ImageList();
 
         // Steam Palette
         private Color steamBg = ColorTranslator.FromHtml("#1b2838");
@@ -87,6 +88,11 @@ namespace AchievementTracker
             achievementListView.Columns.Add("Achievement Name", 220);
             achievementListView.Columns.Add("Description", 350);
             achievementListView.Columns.Add("Status", 100);
+
+            // Set up image list for icons
+            achievementIcons.ImageSize = new Size(48, 48);
+            achievementIcons.ColorDepth = ColorDepth.Depth32Bit;
+            achievementListView.SmallImageList = achievementIcons;
 
             // Set up Steam-style groups
             ListViewGroup grpUnlocked = new ListViewGroup("Unlocked Achievements");
@@ -193,6 +199,9 @@ namespace AchievementTracker
                             string displayName = ach.GetProperty("displayName").GetString() ?? "Unknown";
                             string description = ach.TryGetProperty("description", out JsonElement descElement) ? descElement.GetString() ?? "" : "";
                             bool isHidden = ach.TryGetProperty("hidden", out JsonElement hiddenElement) && hiddenElement.GetInt32() == 1;
+                            
+                            string iconUrl = ach.TryGetProperty("icon", out JsonElement iconEl) ? iconEl.GetString() ?? "" : "";
+                            string iconGrayUrl = ach.TryGetProperty("icongray", out JsonElement iconGrayEl) ? iconGrayEl.GetString() ?? "" : "";
 
                             bool isUnlocked = unlockedAchievements.Contains(internalName);
                             if (isUnlocked) unlockedCount++;
@@ -222,6 +231,14 @@ namespace AchievementTracker
                             }
 
                             achievementListView.Items.Add(item);
+
+                            // Trigger async image download
+                            string targetIconUrl = isUnlocked ? iconUrl : iconGrayUrl;
+                            if (!string.IsNullOrEmpty(targetIconUrl))
+                            {
+                                string imageKey = internalName + (isUnlocked ? "_unlocked" : "_locked");
+                                _ = LoadImageAsync(targetIconUrl, imageKey, item);
+                            }
                         }
                         
                         progressLabel.Text = $"{unlockedCount} / {totalCount} ACHIEVEMENTS EARNED";
@@ -229,6 +246,26 @@ namespace AchievementTracker
                 }
             }
             catch { MessageBox.Show("Failed to connect to Steam.", "Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        private async Task LoadImageAsync(string url, string key, ListViewItem item)
+        {
+            try
+            {
+                byte[] imageBytes = await httpClient.GetByteArrayAsync(url);
+                using MemoryStream ms = new MemoryStream(imageBytes);
+                Image img = Image.FromStream(ms);
+                
+                // We must update UI elements on the main UI thread
+                this.Invoke(new Action(() => {
+                    if (!achievementIcons.Images.ContainsKey(key))
+                    {
+                        achievementIcons.Images.Add(key, img);
+                    }
+                    item.ImageKey = key;
+                }));
+            }
+            catch { } // Silently ignore failed image downloads
         }
     }
 }
