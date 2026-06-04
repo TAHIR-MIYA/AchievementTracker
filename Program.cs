@@ -12,7 +12,10 @@ namespace AchievementTracker
     class Program
     {
         static string dictionaryPath = "achievement_dictionary.json";
+        static string iconsPath = "achievement_icons.json";
+        
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
+        static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
         static Dictionary<string, bool> previousState = new Dictionary<string, bool>();
 
         static NotifyIcon? trayIcon;
@@ -74,8 +77,8 @@ namespace AchievementTracker
                 // 1. WATCH GOLDBERG
                 string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", game.AppId);
                 Directory.CreateDirectory(goldbergDir); 
-                LoadGoldbergBaseline(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
-                AttachWatcher(goldbergDir, "*.json", (s, e) => OnGoldbergFileChanged(s, e, game.AppId));
+                LoadBaselineState(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
+                AttachWatcher(goldbergDir, "*.json", (s, e) => OnAchievementFileChanged(s, e, game.AppId));
 
                 // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
                 string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
@@ -85,17 +88,19 @@ namespace AchievementTracker
                     string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
                     Directory.CreateDirectory(emuDir);
 
+                    // Pre-scan directories to set baseline
                     string iniPath = Path.Combine(emuDir, "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "Stats", "Achievements"); 
                     
-                    ParseIni(game.AppId, iniPath, isBaseline: true);
+                    ParseIniForBaseline(game.AppId, iniPath);
 
+                    // Watch the whole directory including subfolders to catch everything
                     AttachWatcher(emuDir, "*", (s, e) => {
                         string lowerName = e.Name.ToLower();
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
-                            ParseIni(game.AppId, e.FullPath, isBaseline: false);
+                            ParseIniForChanges(game.AppId, e.FullPath);
                     });
                 }
             }
@@ -113,7 +118,7 @@ namespace AchievementTracker
             activeWatchers.Add(watcher);
         }
 
-        static void LoadGoldbergBaseline(string appId, string filePath)
+        static void LoadBaselineState(string appId, string filePath)
         {
             if (!File.Exists(filePath)) return;
             try
@@ -123,12 +128,12 @@ namespace AchievementTracker
                 using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
-                    if (ExtractGoldbergStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
+                    if (ExtractAchievementStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
                 }
             } catch { }
         }
 
-        static void OnGoldbergFileChanged(object sender, FileSystemEventArgs e, string appId)
+        static void OnAchievementFileChanged(object sender, FileSystemEventArgs e, string appId)
         {
             Thread.Sleep(50); 
             try
@@ -139,31 +144,30 @@ namespace AchievementTracker
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
                     string achKey = prop.Name;
-                    bool isEarned = ExtractGoldbergStatus(prop.Value);
+                    bool isEarned = ExtractAchievementStatus(prop.Value);
                     string stateKey = appId + "_" + achKey; 
 
                     if (isEarned && (!previousState.ContainsKey(stateKey) || !previousState[stateKey]))
                     {
                         previousState[stateKey] = true; 
-                        ShowPopup(GetDisplayName(appId, achKey));
+                        TriggerUI(appId, achKey);
                     }
                 }
             } catch { }
         }
 
-        static bool ExtractGoldbergStatus(JsonElement element)
+        static bool ExtractAchievementStatus(JsonElement element)
         {
             if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("earned", out JsonElement earned)) return earned.GetBoolean(); 
             else if (element.ValueKind == JsonValueKind.True) return true; 
             return false;
         }
 
-        static void ParseIni(string appId, string filePath, bool isBaseline)
+        static void ParseIniForBaseline(string appId, string filePath)
         {
             if (!File.Exists(filePath)) return;
             try
             {
-                Thread.Sleep(50);
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
                 string line;
@@ -175,38 +179,73 @@ namespace AchievementTracker
                     string tLine = originalLine.ToLower();
 
                     if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
-                    {
                         currentSection = originalLine.Substring(1, originalLine.Length - 2);
-                    }
-                    else if ((tLine == "achieved=1" || tLine == "unlocked=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine == "unlocked=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
+                    else if ((tLine == "achieved=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
                     {
-                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" && tLine.Split('=')[0] != "unlocked" ? originalLine.Split('=')[0] : currentSection;
+                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
+                        previousState[appId + "_" + achKey] = true; 
+                    }
+                }
+            } catch { }
+        }
+
+        static void ParseIniForChanges(string appId, string filePath)
+        {
+            Thread.Sleep(50);
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var sr = new StreamReader(fs);
+                string line;
+                string currentSection = "";
+
+                while ((line = sr.ReadLine()) != null)
+                {
+                    string originalLine = line.Trim();
+                    string tLine = originalLine.ToLower();
+
+                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
+                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
+                    else if ((tLine == "achieved=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
+                    {
+                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
                         string stateKey = appId + "_" + achKey; 
 
                         if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
                         {
                             previousState[stateKey] = true; 
-                            if (!isBaseline) ShowPopup(GetDisplayName(appId, achKey));
+                            TriggerUI(appId, achKey);
                         }
                     }
                 }
             } catch { }
         }
 
-        static string GetDisplayName(string appId, string internalKey)
+        static void TriggerUI(string appId, string achKey)
         {
-            string lookupKey = appId + "_" + internalKey;
-            return achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : internalKey;
+            string lookupKey = appId + "_" + achKey;
+            string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
+            string iconUrl = achievementIcons.ContainsKey(lookupKey) ? achievementIcons[lookupKey] : "";
+            
+            ShowPopup(displayName, iconUrl);
         }
 
         static void LoadTranslator()
         {
-            if (File.Exists(dictionaryPath))
-            {
+            // Load Names
+            if (File.Exists(dictionaryPath)) {
                 try {
                     string json = File.ReadAllText(dictionaryPath);
                     if (!string.IsNullOrWhiteSpace(json)) achievementNames = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
                 } catch { achievementNames = new Dictionary<string, string>(); }
+            }
+            
+            // Load Icons
+            if (File.Exists(iconsPath)) {
+                try {
+                    string json = File.ReadAllText(iconsPath);
+                    if (!string.IsNullOrWhiteSpace(json)) achievementIcons = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                } catch { achievementIcons = new Dictionary<string, string>(); }
             }
         }
 
@@ -219,7 +258,9 @@ namespace AchievementTracker
         static async Task DownloadAllGameData(List<TrackedGame> games, string apiKey)
         {
             foreach (var game in games) await FetchSteamData(game.AppId, apiKey);
+            
             File.WriteAllText(dictionaryPath, JsonSerializer.Serialize(achievementNames, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(iconsPath, JsonSerializer.Serialize(achievementIcons, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         static async Task FetchSteamData(string appId, string apiKey)
@@ -237,22 +278,26 @@ namespace AchievementTracker
                         foreach (JsonElement ach in achievementsElement.EnumerateArray())
                         {
                             string internalName = ach.GetProperty("name").GetString() ?? "";
-                            achievementNames[$"{appId}_{internalName}"] = ach.GetProperty("displayName").GetString() ?? internalName;
+                            string displayName = ach.GetProperty("displayName").GetString() ?? internalName;
+                            string iconUrl = ach.TryGetProperty("icon", out JsonElement iconEl) ? iconEl.GetString() ?? "" : "";
+                            
+                            achievementNames[$"{appId}_{internalName}"] = displayName;
+                            achievementIcons[$"{appId}_{internalName}"] = iconUrl;
                         }
                     }
                 }
             } catch { }
         }
 
-        static void ShowPopup(string achievementName)
+        static void ShowPopup(string achievementName, string iconUrl)
         {
-            if (dashboard != null)
+            Thread uiThread = new Thread(() =>
             {
-                dashboard.Invoke(new Action(() => {
-                    OverlayWindow window = new OverlayWindow(achievementName);
-                    window.Show(); 
-                }));
-            }
+                OverlayWindow window = new OverlayWindow(achievementName, iconUrl);
+                Application.Run(window);
+            });
+            uiThread.SetApartmentState(ApartmentState.STA);
+            uiThread.Start();
         }
     }
 }
