@@ -84,13 +84,18 @@ namespace AchievementTracker
 
                 // 2. WATCHER FOR CODEX EMULATOR (INI)
                 string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
-                string codexDir = Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId, "remote");
+                string codexDir = Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId);
                 Directory.CreateDirectory(codexDir);
-                ParseCodexIni(game.AppId, Path.Combine(codexDir, "achievements.ini"), isBaseline: true);
+                
+                // Baseline check
+                string iniPath = Path.Combine(codexDir, "achievements.ini");
+                if (!File.Exists(iniPath)) iniPath = Path.Combine(codexDir, "remote", "achievements.ini");
+                ParseCodexIni(game.AppId, iniPath, isBaseline: true);
 
                 FileSystemWatcher codexWatcher = new FileSystemWatcher(codexDir, "achievements.ini")
                 {
                     NotifyFilter = NotifyFilters.LastWrite,
+                    IncludeSubdirectories = true, // Magic fix! Catches it anywhere inside the CODEX folder
                     EnableRaisingEvents = true
                 };
                 codexWatcher.Changed += (sender, e) => {
@@ -154,7 +159,7 @@ namespace AchievementTracker
             return false;
         }
 
-        // --- NEW: CODEX INI PARSER ---
+        // --- UPGRADED CODEX INI PARSER ---
         static void ParseCodexIni(string appId, string filePath, bool isBaseline)
         {
             if (!File.Exists(filePath)) return;
@@ -163,20 +168,28 @@ namespace AchievementTracker
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
                 string line;
+                string currentSection = "";
+
                 while ((line = sr.ReadLine()) != null)
                 {
-                    // CODEX writes achievements like: ACH_FIRST_BLOOD=1
-                    var parts = line.Split('=');
-                    if (parts.Length == 2 && parts[1].Trim() == "1")
+                    line = line.Trim();
+
+                    // Detect section headers like [CHARMED]
+                    if (line.StartsWith("[") && line.EndsWith("]"))
                     {
-                        string achKey = parts[0].Trim();
+                        currentSection = line.Substring(1, line.Length - 2);
+                    }
+                    // Detect if the current section unlocked!
+                    else if (line == "Achieved=1" && !string.IsNullOrEmpty(currentSection) && currentSection != "SteamAchievements")
+                    {
+                        string achKey = currentSection;
                         string stateKey = appId + "_" + achKey; 
 
                         if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
                         {
                             previousState[stateKey] = true; 
                             
-                            if (!isBaseline) // Only popup if this is a live change, not on startup
+                            if (!isBaseline) // Only popup if this is a live change
                             {
                                 string lookupKey = appId + "_" + achKey;
                                 string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
