@@ -96,10 +96,12 @@ namespace AchievementTracker
             string appId = game.AppId;
             string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
 
+            // 1. GOLDBERG
             string goldbergPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId, "achievements.json");
             ReadGoldbergState(goldbergPath);
 
-            string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"OnlineFix" };
+            // 2. THE BIG 5 INI EMULATORS (Added TENOKE)
+            string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
             foreach (string emu in emuFolders)
             {
                 string emuDir = Path.Combine(publicDocs, "Documents", emu, appId);
@@ -107,7 +109,6 @@ namespace AchievementTracker
                 {
                     foreach (string file in Directory.GetFiles(emuDir, "*", SearchOption.AllDirectories))
                     {
-                        // FIXED: Made this case-insensitive to catch "Achievements.ini"
                         string lowerFile = file.ToLower();
                         if (lowerFile.Contains("achievement") || lowerFile.Contains("stats"))
                             ReadIniState(file);
@@ -146,13 +147,12 @@ namespace AchievementTracker
                 foreach (string line in lines)
                 {
                     string originalLine = line.Trim();
-                    string tLine = originalLine.ToLower(); // Compare in lowercase!
+                    string tLine = originalLine.ToLower(); 
 
                     if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
                     {
                         currentSection = originalLine.Substring(1, originalLine.Length - 2);
                     }
-                    // FIXED: Now checks for achieved=true as well as achieved=1
                     else if ((tLine == "achieved=1" || tLine == "unlocked=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine == "unlocked=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
                     {
                         string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" && tLine.Split('=')[0] != "unlocked" ? originalLine.Split('=')[0] : currentSection;

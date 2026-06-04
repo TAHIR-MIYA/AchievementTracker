@@ -77,8 +77,8 @@ namespace AchievementTracker
                 LoadGoldbergBaseline(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
                 AttachWatcher(goldbergDir, "*.json", (s, e) => OnGoldbergFileChanged(s, e, game.AppId));
 
-                // 2. WATCH INI EMULATORS (CODEX, RUNE, FLT, OnlineFix)
-                string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"OnlineFix" };
+                // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
+                string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
                 
                 foreach (string emu in emuFolders)
                 {
