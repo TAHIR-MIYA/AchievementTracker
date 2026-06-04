@@ -29,7 +29,7 @@ namespace AchievementTracker
         public MainWindow()
         {
             this.Text = "Universal Achievement Tracker";
-            this.Size = new Size(500, 420); 
+            this.Size = new Size(500, 440); // Slightly taller for the new button
             this.BackColor = Color.FromArgb(30, 30, 30);
             this.ForeColor = Color.White;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -43,13 +43,14 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
+            // --- Left Side: Game List ---
             Label listLabel = new Label { Text = "Tracked Games:", Location = new Point(20, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(listLabel);
 
             gameList = new ListBox
             {
                 Location = new Point(20, 45),
-                Size = new Size(200, 240),
+                Size = new Size(200, 250),
                 BackColor = Color.FromArgb(45, 45, 48),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 10),
@@ -58,6 +59,7 @@ namespace AchievementTracker
             RefreshGameListUI();
             this.Controls.Add(gameList);
 
+            // --- Right Side: Add New Game ---
             Label addLabel = new Label { Text = "Add New Game", Location = new Point(240, 20), AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
             this.Controls.Add(addLabel);
 
@@ -85,14 +87,30 @@ namespace AchievementTracker
             addButton.Click += AddButton_Click;
             this.Controls.Add(addButton);
 
-            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 300) };
+            // --- THE NEW AUTO-DETECT BUTTON ---
+            Button autoDetectBtn = new Button
+            {
+                Text = "🔍 Auto-Detect (Browse .exe)",
+                Location = new Point(240, 225),
+                Size = new Size(200, 30),
+                BackColor = Color.SlateBlue,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9)
+            };
+            autoDetectBtn.FlatAppearance.BorderSize = 0;
+            autoDetectBtn.Click += AutoDetectBtn_Click;
+            this.Controls.Add(autoDetectBtn);
+
+            // --- Bottom Section: Global Settings ---
+            Panel divider = new Panel { Size = new Size(440, 1), BackColor = Color.Gray, Location = new Point(20, 310) };
             this.Controls.Add(divider);
 
-            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 315), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            Label apiLabel = new Label { Text = "Steam API Key (For real achievement names):", Location = new Point(20, 325), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
             this.Controls.Add(apiLabel);
             
             apiInput = new TextBox { 
-                Location = new Point(20, 335), 
+                Location = new Point(20, 345), 
                 Size = new Size(300, 25), 
                 BackColor = Color.FromArgb(60, 60, 60), 
                 ForeColor = Color.White, 
@@ -104,7 +122,7 @@ namespace AchievementTracker
             Button saveApiButton = new Button
             {
                 Text = "Save Key",
-                Location = new Point(330, 334),
+                Location = new Point(330, 344),
                 Size = new Size(110, 27),
                 BackColor = Color.MediumSeaGreen,
                 ForeColor = Color.White,
@@ -113,6 +131,61 @@ namespace AchievementTracker
             saveApiButton.FlatAppearance.BorderSize = 0;
             saveApiButton.Click += SaveApiButton_Click;
             this.Controls.Add(saveApiButton);
+        }
+
+        // --- NEW AUTO DETECT LOGIC ---
+        private void AutoDetectBtn_Click(object? sender, EventArgs e)
+        {
+            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            {
+                openFileDialog.Filter = "Game Executable (*.exe)|*.exe";
+                openFileDialog.Title = "Select the cracked game's main .exe file";
+
+                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    string exePath = openFileDialog.FileName;
+                    string dir = Path.GetDirectoryName(exePath) ?? "";
+                    string detectedAppId = "";
+
+                    // Strategy 1: Look for standard steam_appid.txt
+                    string appIdPath = Path.Combine(dir, "steam_appid.txt");
+                    if (File.Exists(appIdPath)) detectedAppId = File.ReadAllText(appIdPath).Trim();
+
+                    // Strategy 2: Look for Goldberg's hidden steam_appid.txt
+                    if (string.IsNullOrEmpty(detectedAppId))
+                    {
+                        appIdPath = Path.Combine(dir, "steam_settings", "steam_appid.txt");
+                        if (File.Exists(appIdPath)) detectedAppId = File.ReadAllText(appIdPath).Trim();
+                    }
+
+                    // Strategy 3: Read inside CODEX steam_emu.ini
+                    if (string.IsNullOrEmpty(detectedAppId))
+                    {
+                        string iniPath = Path.Combine(dir, "steam_emu.ini");
+                        if (File.Exists(iniPath))
+                        {
+                            foreach (string line in File.ReadLines(iniPath))
+                            {
+                                if (line.Trim().StartsWith("AppId="))
+                                {
+                                    detectedAppId = line.Split('=')[1].Trim();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(detectedAppId))
+                    {
+                        appIdInput.Text = detectedAppId;
+                        nameInput.Text = new DirectoryInfo(dir).Name; // Uses the folder name as a guess!
+                    }
+                    else
+                    {
+                        MessageBox.Show("Could not automatically find the Steam App ID. You may need to enter it manually.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            }
         }
 
         private void SaveApiButton_Click(object? sender, EventArgs e)
