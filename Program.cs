@@ -69,22 +69,40 @@ namespace AchievementTracker
 
             foreach (var game in games)
             {
+                // 1. WATCHER FOR GOLDBERG EMULATOR (JSON)
                 string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", game.AppId);
                 Directory.CreateDirectory(goldbergDir); 
-                
-                LoadBaselineState(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
+                LoadGoldbergBaseline(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
 
-                FileSystemWatcher watcher = new FileSystemWatcher(goldbergDir, "achievements.json")
+                FileSystemWatcher goldbergWatcher = new FileSystemWatcher(goldbergDir, "achievements.json")
                 {
                     NotifyFilter = NotifyFilters.LastWrite,
                     EnableRaisingEvents = true
                 };
-                watcher.Changed += (sender, e) => OnAchievementFileChanged(sender, e, game.AppId);
-                activeWatchers.Add(watcher);
+                goldbergWatcher.Changed += (sender, e) => OnGoldbergFileChanged(sender, e, game.AppId);
+                activeWatchers.Add(goldbergWatcher);
+
+                // 2. WATCHER FOR CODEX EMULATOR (INI)
+                string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
+                string codexDir = Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId, "remote");
+                Directory.CreateDirectory(codexDir);
+                ParseCodexIni(game.AppId, Path.Combine(codexDir, "achievements.ini"), isBaseline: true);
+
+                FileSystemWatcher codexWatcher = new FileSystemWatcher(codexDir, "achievements.ini")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite,
+                    EnableRaisingEvents = true
+                };
+                codexWatcher.Changed += (sender, e) => {
+                    Thread.Sleep(50); // Slight delay for file lock
+                    ParseCodexIni(game.AppId, e.FullPath, isBaseline: false);
+                };
+                activeWatchers.Add(codexWatcher);
             }
         }
 
-        static void LoadBaselineState(string appId, string filePath)
+        // --- GOLDBERG JSON PARSER ---
+        static void LoadGoldbergBaseline(string appId, string filePath)
         {
             if (!File.Exists(filePath)) return;
             try
@@ -94,14 +112,14 @@ namespace AchievementTracker
                 using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
-                    if (ExtractAchievementStatus(prop.Value)) 
+                    if (ExtractGoldbergStatus(prop.Value)) 
                         previousState[appId + "_" + prop.Name] = true;
                 }
             }
             catch { }
         }
 
-        static void OnAchievementFileChanged(object sender, FileSystemEventArgs e, string appId)
+        static void OnGoldbergFileChanged(object sender, FileSystemEventArgs e, string appId)
         {
             Thread.Sleep(50); 
             try
@@ -112,16 +130,14 @@ namespace AchievementTracker
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
                     string achKey = prop.Name;
-                    bool isEarned = ExtractAchievementStatus(prop.Value);
+                    bool isEarned = ExtractGoldbergStatus(prop.Value);
                     string stateKey = appId + "_" + achKey; 
 
                     if (isEarned && (!previousState.ContainsKey(stateKey) || !previousState[stateKey]))
                     {
                         previousState[stateKey] = true; 
-                        
                         string lookupKey = appId + "_" + achKey;
                         string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
-                        
                         ShowPopup(displayName);
                     }
                 }
@@ -129,7 +145,7 @@ namespace AchievementTracker
             catch { }
         }
 
-        static bool ExtractAchievementStatus(JsonElement element)
+        static bool ExtractGoldbergStatus(JsonElement element)
         {
             if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("earned", out JsonElement earnedElement))
                 return earnedElement.GetBoolean(); 
@@ -138,6 +154,42 @@ namespace AchievementTracker
             return false;
         }
 
+        // --- NEW: CODEX INI PARSER ---
+        static void ParseCodexIni(string appId, string filePath, bool isBaseline)
+        {
+            if (!File.Exists(filePath)) return;
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var sr = new StreamReader(fs);
+                string line;
+                while ((line = sr.ReadLine()) != null)
+                {
+                    // CODEX writes achievements like: ACH_FIRST_BLOOD=1
+                    var parts = line.Split('=');
+                    if (parts.Length == 2 && parts[1].Trim() == "1")
+                    {
+                        string achKey = parts[0].Trim();
+                        string stateKey = appId + "_" + achKey; 
+
+                        if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
+                        {
+                            previousState[stateKey] = true; 
+                            
+                            if (!isBaseline) // Only popup if this is a live change, not on startup
+                            {
+                                string lookupKey = appId + "_" + achKey;
+                                string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
+                                ShowPopup(displayName);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // --- TRANSLATOR & API STUFF ---
         static void LoadTranslator()
         {
             if (File.Exists(dictionaryPath))
