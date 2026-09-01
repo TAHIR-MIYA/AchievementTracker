@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -38,7 +39,7 @@ namespace AchievementTracker
             
             TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
 
-            // Trigger an automatic cloud save backup on startup if path is configured
+            // Trigger an automatic cloud backup on startup if path is configured
             if (!string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
             {
                 Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
@@ -111,7 +112,6 @@ namespace AchievementTracker
             }
         }
 
-        // --- STRATEGY 1: Smart Timestamped Cloud Backup with Rotation Limits (Keeps max 5 recent archives) ---
         public static int PerformCloudBackups(List<TrackedGame> games, string cloudDestinationPath)
         {
             if (string.IsNullOrWhiteSpace(cloudDestinationPath)) return 0;
@@ -122,48 +122,60 @@ namespace AchievementTracker
             try
             {
                 Directory.CreateDirectory(cloudDestinationPath);
+                string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
 
                 foreach (var game in games)
                 {
-                    List<string> foldersToZip = new List<string>();
+                    string tempStage = Path.Combine(Path.GetTempPath(), "TrackerBackupStage_" + Guid.NewGuid().ToString());
+                    Directory.CreateDirectory(tempStage);
 
-                    // Locate Goldberg save folder
+                    bool gameHasFiles = false;
+                    string gameStageDir = Path.Combine(tempStage, $"Backup_{game.Name}_{game.AppId}");
+                    Directory.CreateDirectory(gameStageDir);
+
+                    // 1. Check Goldberg save folder
                     string goldbergDir = Path.Combine(appData, "Goldberg SteamEmu Saves", game.AppId);
-                    if (Directory.Exists(goldbergDir)) foldersToZip.Add(goldbergDir);
+                    if (Directory.Exists(goldbergDir))
+                    {
+                        CopyDirectory(goldbergDir, Path.Combine(gameStageDir, "Goldberg"));
+                        gameHasFiles = true;
+                    }
 
-                    // Locate INI Emu save folders
+                    // 2. Check INI Emu save folders
                     string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
                     foreach (string emu in emuFolders)
                     {
                         string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
-                        if (Directory.Exists(emuDir)) foldersToZip.Add(emuDir);
+                        if (Directory.Exists(emuDir))
+                        {
+                            CopyDirectory(emuDir, Path.Combine(gameStageDir, emu.Replace(@"\", "_")));
+                            gameHasFiles = true;
+                        }
                     }
 
-                    if (foldersToZip.Count > 0)
+                    // 3. Special Case: Elden Ring (.sl2 saves in AppData\Roaming\EldenRing)
+                    if (game.AppId == "1245620" || game.Name.Contains("Elden Ring", StringComparison.OrdinalIgnoreCase))
                     {
-                        string gameBackupDir = Path.Combine(cloudDestinationPath, $"Backup_{game.Name}_{game.AppId}");
-                        Directory.CreateDirectory(gameBackupDir);
-
-                        string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-                        string zipFilePath = Path.Combine(gameBackupDir, $"Save_{timestamp}.zip");
-
-                        string tempStage = Path.Combine(Path.GetTempPath(), "TrackerBackupStage_" + Guid.NewGuid().ToString());
-                        Directory.CreateDirectory(tempStage);
-
-                        foreach (var srcFolder in foldersToZip)
+                        string eldenRingRoaming = Path.Combine(appData, "EldenRing");
+                        if (Directory.Exists(eldenRingRoaming))
                         {
-                            string folderName = new DirectoryInfo(srcFolder).Name;
-                            CopyDirectory(srcFolder, Path.Combine(tempStage, folderName));
+                            CopyDirectory(eldenRingRoaming, Path.Combine(gameStageDir, "EldenRing_Saves"));
+                            gameHasFiles = true;
                         }
+                    }
+
+                    if (gameHasFiles)
+                    {
+                        // Clean filename safe characters
+                        string safeGameName = string.Concat(game.Name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
+                        string zipFilePath = Path.Combine(cloudDestinationPath, $"Save_{safeGameName}_{timestamp}.zip");
 
                         if (File.Exists(zipFilePath)) File.Delete(zipFilePath);
-                        ZipFile.CreateFromDirectory(tempStage, zipFilePath, CompressionLevel.Optimal, false);
+                        ZipFile.CreateFromDirectory(gameStageDir, zipFilePath, CompressionLevel.Optimal, false);
 
-                        try { Directory.Delete(tempStage, true); } catch { }
-
-                        // ROTATION CLEANUP: Keep only the 5 most recent backups
-                        var backupFiles = new DirectoryInfo(gameBackupDir)
-                            .GetFiles("Save_*.zip")
+                        // ROTATION CLEANUP: Keep only the 5 most recent backups for THIS game in the cloud folder
+                        var backupFiles = new DirectoryInfo(cloudDestinationPath)
+                            .GetFiles($"Save_{safeGameName}_*.zip")
                             .OrderByDescending(f => f.CreationTime)
                             .ToList();
 
@@ -177,6 +189,8 @@ namespace AchievementTracker
 
                         successCount++;
                     }
+
+                    try { Directory.Delete(tempStage, true); } catch { }
                 }
             }
             catch (Exception ex)
@@ -256,7 +270,6 @@ namespace AchievementTracker
                         previousState[stateKey] = true; 
                         TriggerUI(appId, achKey);
 
-                        // Automatically backup saves when an achievement is unlocked!
                         if (dashboard != null && !string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
                         {
                             Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));

@@ -25,14 +25,14 @@ namespace AchievementTracker
         private TextBox nameInput = new TextBox();
         private TextBox appIdInput = new TextBox();
         private TextBox apiInput = new TextBox(); 
-        private TextBox cloudPathInput = new TextBox(); // Cloud sync folder path input
+        private TextBox cloudPathInput = new TextBox(); 
         
         private List<TrackedGame> games = new List<TrackedGame>();
         private string gamesFilePath = "tracked_games.json";
         private string settingsFilePath = "app_settings.json"; 
 
         public string SavedApiKey { get; private set; } = "";
-        public string SavedCloudPath { get; private set; } = ""; // Stored cloud backup path
+        public string SavedCloudPath { get; private set; } = ""; 
 
         // Steam Color Palette
         private Color steamBg = ColorTranslator.FromHtml("#1b2838");
@@ -45,7 +45,7 @@ namespace AchievementTracker
         public MainWindow()
         {
             this.Text = "Universal Achievement Tracker & Cloud Backup";
-            this.Size = new Size(600, 560); // Expanded size to fit cloud backup configurations
+            this.Size = new Size(600, 560); 
             this.BackColor = steamBg;
             this.ForeColor = steamText;
             
@@ -104,7 +104,7 @@ namespace AchievementTracker
             nameInput.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             this.Controls.Add(nameInput);
 
-            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1091500):", Location = new Point(290, 160), AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            Label appIdLabel = new Label { Text = "Steam App ID (e.g. 1245620):", Location = new Point(290, 160), AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             this.Controls.Add(appIdLabel);
             appIdInput = CreateStyledTextBox(new Point(290, 180));
             appIdInput.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -120,13 +120,11 @@ namespace AchievementTracker
             autoDetectButton.Click += AutoDetectBtn_Click;
             this.Controls.Add(autoDetectButton);
 
-            // Cloud Backup Trigger Button
             Button backupNowButton = CreateStyledButton("☁️ Backup All Saves Now", new Point(290, 315), new Size(260, 35), steamGreen, Color.White);
             backupNowButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             backupNowButton.Click += BackupNowButton_Click;
             this.Controls.Add(backupNowButton);
 
-            // Footer Panel for API Key & Cloud Folder configuration
             Panel footerPanel = new Panel { Size = new Size(600, 110), BackColor = steamPanel, Location = new Point(0, 430), Dock = DockStyle.Bottom };
             
             Label apiLabel = new Label { Text = "Steam Developer API Key:", Location = new Point(20, 8), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
@@ -298,7 +296,7 @@ namespace AchievementTracker
             {
                 using (FolderBrowserDialog fbd = new FolderBrowserDialog())
                 {
-                    fbd.Description = "Select your Google Drive, OneDrive, or local backup folder";
+                    fbd.Description = "Select your Google Drive sync folder (e.g. AchievementBackups)";
                     if (fbd.ShowDialog() == DialogResult.OK)
                     {
                         SavedCloudPath = fbd.SelectedPath;
@@ -310,7 +308,7 @@ namespace AchievementTracker
             }
 
             int backedUpCount = Program.PerformCloudBackups(games, SavedCloudPath);
-            MessageBox.Show($"Successfully backed up {backedUpCount} game saves to your cloud folder!", "Cloud Backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"Successfully backed up saves for {backedUpCount} games to your cloud folder!", "Cloud Backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void LoadSettings()
