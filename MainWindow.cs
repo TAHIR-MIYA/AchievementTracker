@@ -25,12 +25,14 @@ namespace AchievementTracker
         private TextBox nameInput = new TextBox();
         private TextBox appIdInput = new TextBox();
         private TextBox apiInput = new TextBox(); 
+        private TextBox cloudPathInput = new TextBox(); // Cloud sync folder path input
         
         private List<TrackedGame> games = new List<TrackedGame>();
         private string gamesFilePath = "tracked_games.json";
         private string settingsFilePath = "app_settings.json"; 
 
         public string SavedApiKey { get; private set; } = "";
+        public string SavedCloudPath { get; private set; } = ""; // Stored cloud backup path
 
         // Steam Color Palette
         private Color steamBg = ColorTranslator.FromHtml("#1b2838");
@@ -42,8 +44,8 @@ namespace AchievementTracker
 
         public MainWindow()
         {
-            this.Text = "Universal Achievement Tracker";
-            this.Size = new Size(600, 480); 
+            this.Text = "Universal Achievement Tracker & Cloud Backup";
+            this.Size = new Size(600, 560); // Expanded size to fit cloud backup configurations
             this.BackColor = steamBg;
             this.ForeColor = steamText;
             
@@ -64,7 +66,7 @@ namespace AchievementTracker
         private void InitializeUI()
         {
             Panel headerPanel = new Panel { Size = new Size(600, 60), BackColor = steamPanel, Location = new Point(0, 0), Dock = DockStyle.Top };
-            Label titleLabel = new Label { Text = "LIBRARY", Font = new Font("Segoe UI", 16, FontStyle.Bold), ForeColor = steamBlue, Location = new Point(20, 15), AutoSize = true };
+            Label titleLabel = new Label { Text = "LIBRARY & CLOUD BACKUPS", Font = new Font("Segoe UI", 16, FontStyle.Bold), ForeColor = steamBlue, Location = new Point(20, 15), AutoSize = true };
             headerPanel.Controls.Add(titleLabel);
             this.Controls.Add(headerPanel);
 
@@ -74,7 +76,7 @@ namespace AchievementTracker
             gameList = new ListBox
             {
                 Location = new Point(20, 100),
-                Size = new Size(240, 240),
+                Size = new Size(240, 270),
                 BackColor = steamPanel,
                 ForeColor = steamText,
                 Font = new Font("Segoe UI", 11),
@@ -88,7 +90,7 @@ namespace AchievementTracker
             RefreshGameListUI();
             this.Controls.Add(gameList);
 
-            Button removeButton = CreateStyledButton("Remove Selected Game", new Point(20, 350), new Size(240, 30), ColorTranslator.FromHtml("#3d4450"), Color.White);
+            Button removeButton = CreateStyledButton("Remove Selected Game", new Point(20, 380), new Size(240, 30), ColorTranslator.FromHtml("#3d4450"), Color.White);
             removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; 
             removeButton.Click += RemoveButton_Click;
             this.Controls.Add(removeButton);
@@ -118,12 +120,20 @@ namespace AchievementTracker
             autoDetectButton.Click += AutoDetectBtn_Click;
             this.Controls.Add(autoDetectButton);
 
-            Panel footerPanel = new Panel { Size = new Size(600, 70), BackColor = steamPanel, Location = new Point(0, 400), Dock = DockStyle.Bottom };
-            Label apiLabel = new Label { Text = "Steam Developer API Key:", Location = new Point(20, 10), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
+            // Cloud Backup Trigger Button
+            Button backupNowButton = CreateStyledButton("☁️ Backup All Saves Now", new Point(290, 315), new Size(260, 35), steamGreen, Color.White);
+            backupNowButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            backupNowButton.Click += BackupNowButton_Click;
+            this.Controls.Add(backupNowButton);
+
+            // Footer Panel for API Key & Cloud Folder configuration
+            Panel footerPanel = new Panel { Size = new Size(600, 110), BackColor = steamPanel, Location = new Point(0, 430), Dock = DockStyle.Bottom };
+            
+            Label apiLabel = new Label { Text = "Steam Developer API Key:", Location = new Point(20, 8), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
             footerPanel.Controls.Add(apiLabel);
             
             apiInput = new TextBox { 
-                Location = new Point(20, 28), 
+                Location = new Point(20, 25), 
                 Size = new Size(380, 25), 
                 BackColor = steamBg, 
                 ForeColor = Color.White, 
@@ -134,10 +144,31 @@ namespace AchievementTracker
             };
             footerPanel.Controls.Add(apiInput);
 
-            Button saveApiButton = CreateStyledButton("Save Key", new Point(410, 26), new Size(140, 28), steamGreen, Color.White);
+            Button saveApiButton = CreateStyledButton("Save Key", new Point(410, 24), new Size(140, 28), steamButtonBg, Color.White);
             saveApiButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             saveApiButton.Click += SaveApiButton_Click;
             footerPanel.Controls.Add(saveApiButton);
+
+            Label cloudLabel = new Label { Text = "Cloud Folder / Google Drive Sync Directory:", Location = new Point(20, 58), AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Regular), ForeColor = steamText };
+            footerPanel.Controls.Add(cloudLabel);
+
+            cloudPathInput = new TextBox {
+                Location = new Point(20, 75),
+                Size = new Size(380, 25),
+                BackColor = steamBg,
+                ForeColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Segoe UI", 9),
+                Text = SavedCloudPath,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            footerPanel.Controls.Add(cloudPathInput);
+
+            Button saveCloudButton = CreateStyledButton("Set Folder", new Point(410, 74), new Size(140, 28), steamGreen, Color.White);
+            saveCloudButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            saveCloudButton.Click += SaveCloudButton_Click;
+            footerPanel.Controls.Add(saveCloudButton);
+
             this.Controls.Add(footerPanel);
         }
 
@@ -249,9 +280,37 @@ namespace AchievementTracker
         private void SaveApiButton_Click(object? sender, EventArgs e)
         {
             SavedApiKey = apiInput.Text.Trim();
-            File.WriteAllText(settingsFilePath, JsonSerializer.Serialize(new { SteamApiKey = SavedApiKey }));
+            SaveSettingsToJson();
             MessageBox.Show("API Key Saved!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
             Program.TriggerDataDownload(games, SavedApiKey);
+        }
+
+        private void SaveCloudButton_Click(object? sender, EventArgs e)
+        {
+            SavedCloudPath = cloudPathInput.Text.Trim();
+            SaveSettingsToJson();
+            MessageBox.Show("Cloud Backup Folder Saved!", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BackupNowButton_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(SavedCloudPath))
+            {
+                using (FolderBrowserDialog fbd = new FolderBrowserDialog())
+                {
+                    fbd.Description = "Select your Google Drive, OneDrive, or local backup folder";
+                    if (fbd.ShowDialog() == DialogResult.OK)
+                    {
+                        SavedCloudPath = fbd.SelectedPath;
+                        cloudPathInput.Text = SavedCloudPath;
+                        SaveSettingsToJson();
+                    }
+                    else return;
+                }
+            }
+
+            int backedUpCount = Program.PerformCloudBackups(games, SavedCloudPath);
+            MessageBox.Show($"Successfully backed up {backedUpCount} game saves to your cloud folder!", "Cloud Backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void LoadSettings()
@@ -261,8 +320,15 @@ namespace AchievementTracker
                 try {
                     using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(settingsFilePath));
                     if (doc.RootElement.TryGetProperty("SteamApiKey", out JsonElement key)) SavedApiKey = key.GetString() ?? "";
+                    if (doc.RootElement.TryGetProperty("CloudBackupPath", out JsonElement cloud)) SavedCloudPath = cloud.GetString() ?? "";
                 } catch { }
             }
+        }
+
+        private void SaveSettingsToJson()
+        {
+            var settings = new { SteamApiKey = SavedApiKey, CloudBackupPath = SavedCloudPath };
+            File.WriteAllText(settingsFilePath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         private void AddButton_Click(object? sender, EventArgs e)

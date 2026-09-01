@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -36,6 +37,12 @@ namespace AchievementTracker
             UpdateWatchers(dashboard.GetTrackedGames());
             
             TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
+
+            // Trigger an automatic cloud save backup on startup if path is configured
+            if (!string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
+            {
+                Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
+            }
 
             Application.Run(dashboard); 
         }
@@ -88,7 +95,6 @@ namespace AchievementTracker
                     string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
                     Directory.CreateDirectory(emuDir);
 
-                    // Pre-scan directories to set baseline
                     string iniPath = Path.Combine(emuDir, "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
@@ -96,13 +102,103 @@ namespace AchievementTracker
                     
                     ParseIniForBaseline(game.AppId, iniPath);
 
-                    // Watch the whole directory including subfolders to catch everything
                     AttachWatcher(emuDir, "*.*", (s, e) => {
                         string lowerName = e.Name?.ToLower() ?? "";
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
                             ParseIniForChanges(game.AppId, e.FullPath);
                     });
                 }
+            }
+        }
+
+        // --- STRATEGY 1: Smart Timestamped Cloud Backup with Rotation Limits (Keeps max 5 recent archives) ---
+        public static int PerformCloudBackups(List<TrackedGame> games, string cloudDestinationPath)
+        {
+            if (string.IsNullOrWhiteSpace(cloudDestinationPath)) return 0;
+            int successCount = 0;
+            string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+            try
+            {
+                Directory.CreateDirectory(cloudDestinationPath);
+
+                foreach (var game in games)
+                {
+                    List<string> foldersToZip = new List<string>();
+
+                    // Locate Goldberg save folder
+                    string goldbergDir = Path.Combine(appData, "Goldberg SteamEmu Saves", game.AppId);
+                    if (Directory.Exists(goldbergDir)) foldersToZip.Add(goldbergDir);
+
+                    // Locate INI Emu save folders
+                    string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
+                    foreach (string emu in emuFolders)
+                    {
+                        string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
+                        if (Directory.Exists(emuDir)) foldersToZip.Add(emuDir);
+                    }
+
+                    if (foldersToZip.Count > 0)
+                    {
+                        string gameBackupDir = Path.Combine(cloudDestinationPath, $"Backup_{game.Name}_{game.AppId}");
+                        Directory.CreateDirectory(gameBackupDir);
+
+                        string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                        string zipFilePath = Path.Combine(gameBackupDir, $"Save_{timestamp}.zip");
+
+                        string tempStage = Path.Combine(Path.GetTempPath(), "TrackerBackupStage_" + Guid.NewGuid().ToString());
+                        Directory.CreateDirectory(tempStage);
+
+                        foreach (var srcFolder in foldersToZip)
+                        {
+                            string folderName = new DirectoryInfo(srcFolder).Name;
+                            CopyDirectory(srcFolder, Path.Combine(tempStage, folderName));
+                        }
+
+                        if (File.Exists(zipFilePath)) File.Delete(zipFilePath);
+                        ZipFile.CreateFromDirectory(tempStage, zipFilePath, CompressionLevel.Optimal, false);
+
+                        try { Directory.Delete(tempStage, true); } catch { }
+
+                        // ROTATION CLEANUP: Keep only the 5 most recent backups
+                        var backupFiles = new DirectoryInfo(gameBackupDir)
+                            .GetFiles("Save_*.zip")
+                            .OrderByDescending(f => f.CreationTime)
+                            .ToList();
+
+                        if (backupFiles.Count > 5)
+                        {
+                            for (int i = 5; i < backupFiles.Count; i++)
+                            {
+                                try { backupFiles[i].Delete(); } catch { }
+                            }
+                        }
+
+                        successCount++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Cloud Backup Error] {ex.Message}");
+            }
+
+            return successCount;
+        }
+
+        private static void CopyDirectory(string sourceDir, string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+            foreach (string file in Directory.GetFiles(sourceDir))
+            {
+                string targetFilePath = Path.Combine(targetDir, Path.GetFileName(file));
+                File.Copy(file, targetFilePath, true);
+            }
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+            {
+                string targetSubDir = Path.Combine(targetDir, Path.GetFileName(subDir));
+                CopyDirectory(subDir, targetSubDir);
             }
         }
 
@@ -123,7 +219,6 @@ namespace AchievementTracker
             if (!File.Exists(filePath)) return;
             try
             {
-                // Basic retry logic for file locks
                 for (int i = 0; i < 3; i++)
                 {
                     try
@@ -160,10 +255,15 @@ namespace AchievementTracker
                     {
                         previousState[stateKey] = true; 
                         TriggerUI(appId, achKey);
+
+                        // Automatically backup saves when an achievement is unlocked!
+                        if (dashboard != null && !string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
+                        {
+                            Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
+                        }
                     }
                     else if (!isEarned && previousState.ContainsKey(stateKey))
                     {
-                        // Delete from memory so you can re-test it using Notepad!
                         previousState[stateKey] = false; 
                     }
                 }
@@ -229,14 +329,17 @@ namespace AchievementTracker
                         {
                             previousState[stateKey] = true; 
                             TriggerUI(appId, achKey);
+
+                            if (dashboard != null && !string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
+                            {
+                                Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
+                            }
                         }
                     }
                     else if ((tLine == "achieved=0" || tLine.EndsWith("=0") || tLine == "achieved=false" || tLine.EndsWith("=false")) && !string.IsNullOrEmpty(currentSection))
                     {
                         string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
                         string stateKey = appId + "_" + achKey; 
-                        
-                        // Delete from memory so you can re-test it using Notepad!
                         previousState[stateKey] = false; 
                     }
                 }
@@ -311,7 +414,6 @@ namespace AchievementTracker
 
         static void ShowPopup(string achievementName, string iconUrl)
         {
-            // The magic UI thread routing!
             Thread uiThread = new Thread(() =>
             {
                 OverlayWindow window = new OverlayWindow(achievementName, iconUrl);
