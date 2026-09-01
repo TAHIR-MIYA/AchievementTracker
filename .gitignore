@@ -1,12 +1,6 @@
-# .NET Core
+app_settings.json
+tracked_games.json
+achievement_dictionary.json
+achievement_icons.json
 bin/
 obj/
-
-# User-specific files
-*.user
-*.suo
-*.userprefs
-
-# OS generated files
-.DS_Store
-Thumbs.db
