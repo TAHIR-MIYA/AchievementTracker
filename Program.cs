@@ -122,80 +122,107 @@ namespace AchievementTracker
             try
             {
                 Directory.CreateDirectory(cloudDestinationPath);
-                string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
 
                 foreach (var game in games)
                 {
-                    string tempStage = Path.Combine(Path.GetTempPath(), "TrackerBackupStage_" + Guid.NewGuid().ToString());
-                    Directory.CreateDirectory(tempStage);
-
-                    bool gameHasFiles = false;
-                    string gameStageDir = Path.Combine(tempStage, $"Backup_{game.Name}_{game.AppId}");
-                    Directory.CreateDirectory(gameStageDir);
-
-                    // 1. Check Goldberg save folder
-                    string goldbergDir = Path.Combine(appData, "Goldberg SteamEmu Saves", game.AppId);
-                    if (Directory.Exists(goldbergDir))
+                    try
                     {
-                        CopyDirectory(goldbergDir, Path.Combine(gameStageDir, "Goldberg"));
-                        gameHasFiles = true;
-                    }
-
-                    // 2. Check INI Emu save folders
-                    string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
-                    foreach (string emu in emuFolders)
-                    {
-                        string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
-                        if (Directory.Exists(emuDir))
-                        {
-                            CopyDirectory(emuDir, Path.Combine(gameStageDir, emu.Replace(@"\", "_")));
-                            gameHasFiles = true;
-                        }
-                    }
-
-                    // 3. Special Case: Elden Ring (.sl2 saves in AppData\Roaming\EldenRing)
-                    if (game.AppId == "1245620" || game.Name.Contains("Elden Ring", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string eldenRingRoaming = Path.Combine(appData, "EldenRing");
-                        if (Directory.Exists(eldenRingRoaming))
-                        {
-                            CopyDirectory(eldenRingRoaming, Path.Combine(gameStageDir, "EldenRing_Saves"));
-                            gameHasFiles = true;
-                        }
-                    }
-
-                    if (gameHasFiles)
-                    {
+                        string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
                         // Clean filename safe characters
-                        string safeGameName = string.Concat(game.Name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
-                        string zipFilePath = Path.Combine(cloudDestinationPath, $"Save_{safeGameName}_{timestamp}.zip");
+                        string safeGameName = string.Join("_", game.Name.Split(Path.GetInvalidFileNameChars()));
+                        
+                        string tempStage = Path.Combine(Path.GetTempPath(), $"TrackerBackupStage_{safeGameName}_{Guid.NewGuid()}");
+                        if (Directory.Exists(tempStage)) Directory.Delete(tempStage, true);
+                        Directory.CreateDirectory(tempStage);
 
-                        if (File.Exists(zipFilePath)) File.Delete(zipFilePath);
-                        ZipFile.CreateFromDirectory(gameStageDir, zipFilePath, CompressionLevel.Optimal, false);
+                        bool gameHasFiles = false;
 
-                        // ROTATION CLEANUP: Keep only the 5 most recent backups for THIS game in the cloud folder
-                        var backupFiles = new DirectoryInfo(cloudDestinationPath)
-                            .GetFiles($"Save_{safeGameName}_*.zip")
-                            .OrderByDescending(f => f.CreationTime)
-                            .ToList();
-
-                        if (backupFiles.Count > 5)
+                        // 1. Check Goldberg save folder
+                        string goldbergDir = Path.Combine(appData, "Goldberg SteamEmu Saves", game.AppId);
+                        if (Directory.Exists(goldbergDir) && Directory.EnumerateFiles(goldbergDir, "*.*", SearchOption.AllDirectories).Any())
                         {
-                            for (int i = 5; i < backupFiles.Count; i++)
+                            CopyDirectory(goldbergDir, Path.Combine(tempStage, "Goldberg", game.AppId));
+                            gameHasFiles = true;
+                        }
+
+                        // 2. Check INI Emu save folders
+                        var emuDictionary = new Dictionary<string, string>
+                        {
+                            { "CODEX", Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId) },
+                            { "RUNE", Path.Combine(publicDocs, "Documents", "Steam", "RUNE", game.AppId) },
+                            { "FLT", Path.Combine(publicDocs, "Documents", "Steam", "FLT", game.AppId) },
+                            { "TENOKE", Path.Combine(publicDocs, "Documents", "Steam", "TENOKE", game.AppId) },
+                            { "OnlineFix", Path.Combine(publicDocs, "Documents", "OnlineFix", game.AppId) }
+                        };
+
+                        foreach (var kvp in emuDictionary)
+                        {
+                            if (Directory.Exists(kvp.Value) && Directory.EnumerateFiles(kvp.Value, "*.*", SearchOption.AllDirectories).Any())
                             {
-                                try { backupFiles[i].Delete(); } catch { }
+                                CopyDirectory(kvp.Value, Path.Combine(tempStage, kvp.Key, game.AppId));
+                                gameHasFiles = true;
                             }
                         }
 
-                        successCount++;
-                    }
+                        // 3. Special Case: Elden Ring (.sl2 saves in AppData\Roaming\EldenRing)
+                        if (game.AppId == "1245620" || game.Name.Contains("Elden Ring", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string eldenRingRoaming = Path.Combine(appData, "EldenRing");
+                            if (Directory.Exists(eldenRingRoaming) && Directory.EnumerateFiles(eldenRingRoaming, "*.*", SearchOption.AllDirectories).Any())
+                            {
+                                CopyDirectory(eldenRingRoaming, Path.Combine(tempStage, "EldenRing_Saves"));
+                                gameHasFiles = true;
+                            }
+                        }
 
-                    try { Directory.Delete(tempStage, true); } catch { }
+                        // 4. Special Case: Sekiro Saves
+                        if (game.AppId == "814380" || game.Name.Contains("Sekiro", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string sekiroAppDir = Path.Combine(appData, "Sekiro");
+                            if (Directory.Exists(sekiroAppDir) && Directory.EnumerateFiles(sekiroAppDir, "*.*", SearchOption.AllDirectories).Any())
+                            {
+                                CopyDirectory(sekiroAppDir, Path.Combine(tempStage, "Sekiro_Saves"));
+                                gameHasFiles = true;
+                            }
+                        }
+
+                        // Zip only if there is data to backup
+                        if (gameHasFiles)
+                        {
+                            string zipFilePath = Path.Combine(cloudDestinationPath, $"Save_{safeGameName}_{timestamp}.zip");
+
+                            if (File.Exists(zipFilePath)) File.Delete(zipFilePath);
+                            ZipFile.CreateFromDirectory(tempStage, zipFilePath, CompressionLevel.Optimal, false);
+
+                            // ROTATION CLEANUP: Keep only the 5 most recent backups for THIS game in the cloud folder
+                            var backupFiles = new DirectoryInfo(cloudDestinationPath)
+                                .GetFiles($"Save_{safeGameName}_*.zip")
+                                .OrderByDescending(f => f.CreationTime)
+                                .ToList();
+
+                            if (backupFiles.Count > 5)
+                            {
+                                for (int i = 5; i < backupFiles.Count; i++)
+                                {
+                                    try { backupFiles[i].Delete(); } catch { }
+                                }
+                            }
+
+                            successCount++;
+                        }
+
+                        // Cleanup temp folder
+                        try { Directory.Delete(tempStage, true); } catch { }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Cloud Backup Error - {game.Name}] {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Cloud Backup Error] {ex.Message}");
+                Console.WriteLine($"[Cloud Backup System Error] {ex.Message}");
             }
 
             return successCount;
@@ -370,6 +397,13 @@ namespace AchievementTracker
 
         static void LoadTranslator()
         {
+            if (!File.Exists(dictionaryPath))
+            {
+                var defaultDictionary = new Dictionary<string, string>();
+                string json = JsonSerializer.Serialize(defaultDictionary, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(dictionaryPath, json);
+            }
+
             if (File.Exists(dictionaryPath)) {
                 try {
                     string json = File.ReadAllText(dictionaryPath);
