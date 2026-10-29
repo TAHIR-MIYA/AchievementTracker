@@ -71,6 +71,29 @@ The application is designed to be modular. You can inject your own assets withou
 
 ---
 
+## 🎥 Recording & Streaming (OBS)
+
+OBS **Game Capture** only records what the game itself draws, so a separate popup window never shows up in it. Pick one of these:
+
+| Method | How | Notes |
+| :--- | :--- | :--- |
+| **Browser Source (recommended)** | In the tracker dashboard click **Copy OBS URL**. In OBS: *Sources → + → Browser*, paste the URL, set Width/Height to your canvas (e.g. `1920 x 1080`). | Works together with Game Capture, no matter how the game renders. The popup is drawn by OBS itself. |
+| **Display Capture** | Record the whole monitor instead of Game Capture. | Captures the desktop popup too. Don't enable the Browser Source as well, or you'll get two popups. |
+| **Window Capture** | Add a *Window Capture* for the window titled `AchievementTracker Overlay`. | Least reliable, because the window only exists for ~5 seconds per unlock. |
+
+**Browser Source options** (add to the end of the URL):
+
+* `?pos=top-left`, `?pos=bottom-right`, `?pos=bottom-left` – move the popup (default is `top-right`).
+* `?sound=1` – play the unlock sound inside the browser source. Tick *Control audio via OBS* on the source so it lands in your recording.
+
+Open **Settings** in the app to use the **Test popup** button, switch the **Desktop popup** and **OBS browser overlay** on or off, and set the **Sound volume** of the desktop popup.
+
+* `&volume=0.3` - volume of the sound inside the browser source (0 to 1, used together with `?sound=1`).
+
+> Note: popups can't appear over a game in *exclusive fullscreen*. Use *Borderless/Windowed* mode in the game's video settings.
+
+---
+
 ## 💻 Developer Guide: Building from Source
 
 If you wish to fork this repository and compile the binary yourself, follow these steps:

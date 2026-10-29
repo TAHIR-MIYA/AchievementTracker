@@ -1,177 +1,277 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AchievementTracker
 {
     public class OverlayWindow : Form
     {
-        // --- NATIVE OS HOOKS FOR Z-ORDERING & AUDIO ---
+        // --- NATIVE OS HOOKS FOR Z-ORDERING, MONITOR LOOKUP & AUDIO ---
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-        
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
         [DllImport("winmm.dll")]
         private static extern long mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
 
-        // --- ANTI-FOCUS STEALING FLAGS ---
+        private const int WM_NCHITTEST = 0x0084;
+        private const int HTTRANSPARENT = -1;
+
+        private const int CardWidth = 420;
+        private const int CardHeight = 84;
+        private const int CornerRadius = 14;
+        private const int ScreenMargin = 40;
+        private const int SlideInMs = 450;
+        private const int HoldMs = 4500;
+        private const int SlideOutMs = 400;
+
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+
+        // --- WINDOW STYLES ---
+        // WS_EX_NOACTIVATE: never steals focus from the game.
+        // WS_EX_TOPMOST:    stays above the game window.
+        // No WS_EX_TOOLWINDOW (capture tools skip tool windows) and no Opacity (it makes the form a
+        // layered window that legacy capture methods can't see). The popup slides instead of fading.
         protected override CreateParams CreateParams
         {
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE (Prevents game controller interruption)
-                cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW (Hides from Alt-Tab menu)
-                cp.ExStyle |= 0x00000008; // WS_EX_TOPMOST (Hardware level top priority)
+                cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+                cp.ExStyle |= 0x00000008; // WS_EX_TOPMOST
                 return cp;
             }
         }
 
-        private string _achievementName;
-        private string _iconUrl;
-        private System.Windows.Forms.Timer _animTimer = new System.Windows.Forms.Timer { Interval = 30 };
-        private int _ticks = 0;
+        protected override bool ShowWithoutActivation => true;
+
+        // Let mouse clicks fall through to the game underneath the popup.
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST)
+            {
+                m.Result = (IntPtr)HTTRANSPARENT;
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        private readonly string _achievementName;
+        private readonly string _iconUrl;
+        private Image? _icon;
+        private readonly System.Windows.Forms.Timer _animTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly Stopwatch _clock = new Stopwatch();
+        private int _left;
+        private int _shownTop;
+        private int _hiddenTop;
 
         public OverlayWindow(string achievementName, string iconUrl)
         {
             _achievementName = achievementName;
             _iconUrl = iconUrl;
-            this.DoubleBuffered = true; 
-            InitializeUI();
-        }
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
-        private void InitializeUI()
-        {
+            this.Text = "AchievementTracker Overlay"; // stable title so capture tools can find it
             this.FormBorderStyle = FormBorderStyle.None;
-            this.Size = new Size(420, 80);
-            this.BackColor = Color.FromArgb(25, 25, 25);
-            this.ForeColor = Color.White;
             this.ShowInTaskbar = false;
-            this.Opacity = 0;
             this.StartPosition = FormStartPosition.Manual;
+            this.BackColor = Theme.Surface;
+            this.Size = new Size(CardWidth, CardHeight);
 
-            // Steam Icon Fetcher
-            PictureBox iconBox = new PictureBox
+            // Rounded corners: built once.
+            using (GraphicsPath path = Theme.RoundedRect(new RectangleF(0, 0, CardWidth, CardHeight), CornerRadius))
             {
-                Size = new Size(50, 50),
-                Location = new Point(15, 15),
-                SizeMode = PictureBoxSizeMode.Zoom
-            };
-            
+                this.Region = new Region(path);
+            }
+
+            // Fallback icon (used until / unless the Steam icon downloads).
             string localIcon = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
-
-            // If we have a Steam image URL, load it asynchronously. Otherwise fallback to your default icon.
-            if (!string.IsNullOrEmpty(_iconUrl) && _iconUrl.StartsWith("http"))
+            if (File.Exists(localIcon))
             {
-                iconBox.LoadAsync(_iconUrl);
-                // If Steam server fails, fallback safely
-                iconBox.LoadCompleted += (s, e) => {
-                    if (e.Error != null && File.Exists(localIcon)) iconBox.Image = new Icon(localIcon).ToBitmap();
-                };
+                try { _icon = new Icon(localIcon, new Size(64, 64)).ToBitmap(); } catch { }
             }
-            else if (File.Exists(localIcon))
-            {
-                iconBox.Image = new Icon(localIcon).ToBitmap();
-            }
-
-            Label titleLabel = new Label
-            {
-                Text = "Achievement Unlocked!",
-                Font = new Font("Segoe UI Semibold", 9, FontStyle.Regular),
-                ForeColor = Color.DarkGray,
-                Location = new Point(80, 15),
-                AutoSize = true
-            };
-
-            Label nameLabel = new Label
-            {
-                Text = _achievementName,
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Location = new Point(80, 35),
-                AutoSize = true
-            };
-
-            this.Controls.Add(iconBox);
-            this.Controls.Add(titleLabel);
-            this.Controls.Add(nameLabel);
 
             _animTimer.Tick += AnimTimer_Tick;
-
             this.Load += OverlayWindow_Load;
-            this.Paint += OverlayWindow_Paint;
+        }
+
+        private async Task LoadRemoteIconAsync()
+        {
+            try
+            {
+                byte[] bytes = await Http.GetByteArrayAsync(_iconUrl).ConfigureAwait(false);
+                using (MemoryStream ms = new MemoryStream(bytes))
+                using (Image tmp = Image.FromStream(ms))
+                {
+                    Bitmap copy = new Bitmap(tmp);   // copy so we don't depend on the stream staying open
+                    if (IsDisposed || !IsHandleCreated) { copy.Dispose(); return; }
+                    BeginInvoke(new Action(() =>
+                    {
+                        Image? old = _icon;
+                        _icon = copy;
+                        old?.Dispose();
+                        Invalidate();
+                    }));
+                }
+            }
+            catch { }
+        }
+
+        // Show the popup on the monitor the game is running on, not always the primary one.
+        private static Screen GetTargetScreen()
+        {
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg != IntPtr.Zero) return Screen.FromHandle(fg);
+            }
+            catch { }
+            return Screen.PrimaryScreen ?? Screen.AllScreens[0];
         }
 
         private void OverlayWindow_Load(object? sender, EventArgs e)
         {
-            // TRUE PS5 POSITIONING (Top-Right)
-            var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
-            this.Left = screen.Width - this.Width - 40; // 40 pixels padding from the right edge
-            this.Top = 40; // 40 pixels padding from the top
+            Rectangle area = GetTargetScreen().WorkingArea;
+            _left = area.Right - this.Width - ScreenMargin;      // top-right corner of that monitor
+            _shownTop = area.Top + ScreenMargin;
+            _hiddenTop = area.Top - this.Height;                 // fully above the screen edge
+            this.Location = new Point(_left, _hiddenTop);
 
-            // Force native topmost override
-            SetWindowPos(this.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            // Force native topmost override (without activating, so the game keeps focus)
+            SetWindowPos(this.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+            if (!string.IsNullOrEmpty(_iconUrl) && _iconUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                _ = LoadRemoteIconAsync();
 
             PlaySound();
+            _clock.Restart();
             _animTimer.Start();
         }
 
+        private static double EaseOutCubic(double x) => 1 - Math.Pow(1 - x, 3);
+        private static double EaseInCubic(double x) => x * x * x;
+
         private void AnimTimer_Tick(object? sender, EventArgs e)
         {
-            _ticks++;
-            if (_ticks < 15 && this.Opacity < 1.0) this.Opacity += 0.1;
-            else if (_ticks > 150) // Approx 4.5 seconds
+            long t = _clock.ElapsedMilliseconds;
+            double top;
+
+            if (t < SlideInMs)
+                top = _hiddenTop + (_shownTop - _hiddenTop) * EaseOutCubic((double)t / SlideInMs);
+            else if (t < SlideInMs + HoldMs)
+                top = _shownTop;
+            else if (t < SlideInMs + HoldMs + SlideOutMs)
+                top = _shownTop + (_hiddenTop - _shownTop) * EaseInCubic((double)(t - SlideInMs - HoldMs) / SlideOutMs);
+            else
             {
-                this.Opacity -= 0.1;
-                if (this.Opacity <= 0)
-                {
-                    _animTimer.Stop();
-                    this.Close(); // Destroys the form and ends the STA thread cleanly
-                }
+                _animTimer.Stop();
+                this.Close(); // ends Application.Run for this popup so the next queued one can show
+                return;
             }
+
+            this.Top = (int)Math.Round(top);
+            Invalidate();   // redraws the draining time bar
         }
 
         private void PlaySound()
         {
-            // Smart Pathing: Check the hidden build folder first, then check the outer VS Code folder!
+            int volume = AppSettings.Current.SoundVolume;
+            if (volume <= 0) return;
+
+            // Smart Pathing: Check the build folder first, then the working directory
             string audioPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "unlock.mp3");
-            if (!File.Exists(audioPath)) 
+            if (!File.Exists(audioPath))
             {
                 audioPath = Path.Combine(Environment.CurrentDirectory, "unlock.mp3");
             }
 
             if (File.Exists(audioPath))
             {
-                // Close any stuck audio streams first, then play
+                // Close any stuck audio streams first, then play (MCI volume is 0-1000)
                 mciSendString("close unlockAudio", null, 0, IntPtr.Zero);
                 mciSendString($"open \"{audioPath}\" type mpegvideo alias unlockAudio", null, 0, IntPtr.Zero);
+                mciSendString($"setaudio unlockAudio volume to {volume * 10}", null, 0, IntPtr.Zero);
                 mciSendString("play unlockAudio from 0", null, 0, IntPtr.Zero);
             }
         }
 
-        // Draw PS5 style rounded corners
-        private void OverlayWindow_Paint(object? sender, PaintEventArgs e)
+        protected override void OnPaint(PaintEventArgs e)
         {
-            GraphicsPath path = new GraphicsPath();
-            int r = 15;
-            path.AddArc(0, 0, r, r, 180, 90);
-            path.AddArc(this.Width - r, 0, r, r, 270, 90);
-            path.AddArc(this.Width - r, this.Height - r, r, r, 0, 90);
-            path.AddArc(0, this.Height - r, r, r, 90, 90);
-            path.CloseFigure();
-            this.Region = new Region(path);
+            Graphics g = e.Graphics;
+            Theme.Smooth(g);
+            Rectangle bounds = new Rectangle(0, 0, Width, Height);
+
+            using (LinearGradientBrush bg = new LinearGradientBrush(bounds, Theme.Raised, Theme.Surface, 90f))
+            {
+                g.FillRectangle(bg, bounds);
+            }
+
+            // Icon (rounded)
+            Rectangle iconRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
+            if (_icon != null)
+            {
+                using (GraphicsPath clip = Theme.RoundedRect(iconRect, 10f))
+                {
+                    GraphicsState state = g.Save();
+                    g.SetClip(clip);
+                    g.DrawImage(_icon, iconRect);
+                    g.Restore(state);
+                }
+            }
+            else
+            {
+                using (GraphicsPath p = Theme.RoundedRect(iconRect, 10f))
+                using (SolidBrush b = new SolidBrush(Theme.Hover))
+                {
+                    g.FillPath(b, p);
+                }
+            }
+
+            // Text
+            Theme.DrawText(g, "Achievement unlocked", Theme.Small, Theme.Accent, new Rectangle(84, 16, Width - 84 - 16, 18));
+            Theme.DrawText(g, _achievementName, Theme.Heading, Theme.Text, new Rectangle(84, 34, Width - 84 - 16, 28));
+
+            // Time bar: drains while the popup is on screen
+            long t = _clock.ElapsedMilliseconds;
+            double remaining = 1.0 - Math.Max(0.0, Math.Min(1.0, (double)(t - SlideInMs) / HoldMs));
+            int barWidth = (int)((Width - 40) * remaining);
+            if (barWidth > 1)
+            {
+                using (GraphicsPath bar = Theme.RoundedRect(new RectangleF(20, Height - 9, barWidth, 3), 1.5f))
+                using (SolidBrush accent = new SolidBrush(Theme.Accent))
+                {
+                    g.FillPath(accent, bar);
+                }
+            }
+
+            // Soft anti-aliased border
+            using (GraphicsPath outline = Theme.RoundedRect(new RectangleF(1, 1, Width - 2, Height - 2), CornerRadius - 1))
+            using (Pen pen = new Pen(Theme.Border, 2f))
+            {
+                g.DrawPath(pen, outline);
+            }
         }
-        
-        protected override bool ShowWithoutActivation
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            get { return true; }
+            _animTimer.Dispose();
+            _icon?.Dispose();
+            base.OnFormClosed(e);
         }
     }
 }

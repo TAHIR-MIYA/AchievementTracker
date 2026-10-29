@@ -1,8 +1,7 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
-using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -33,17 +32,13 @@ namespace AchievementTracker
 
             SetupSystemTray();
             LoadTranslator();
+            StartPopupWorker();
+            ApplyOverlaySettings();
 
             dashboard = new MainWindow();
             UpdateWatchers(dashboard.GetTrackedGames());
             
             TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
-
-            // Trigger an automatic cloud backup on startup if path is configured
-            if (!string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
-            {
-                Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
-            }
 
             Application.Run(dashboard); 
         }
@@ -65,6 +60,7 @@ namespace AchievementTracker
             trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) =>
             {
                 if (trayIcon != null) trayIcon.Visible = false;
+                OverlayServer.Stop();
                 Environment.Exit(0); 
             });
         }
@@ -96,6 +92,7 @@ namespace AchievementTracker
                     string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
                     Directory.CreateDirectory(emuDir);
 
+                    // Pre-scan directories to set baseline
                     string iniPath = Path.Combine(emuDir, "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
@@ -103,143 +100,13 @@ namespace AchievementTracker
                     
                     ParseIniForBaseline(game.AppId, iniPath);
 
+                    // Watch the whole directory including subfolders to catch everything
                     AttachWatcher(emuDir, "*.*", (s, e) => {
                         string lowerName = e.Name?.ToLower() ?? "";
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
                             ParseIniForChanges(game.AppId, e.FullPath);
                     });
                 }
-            }
-        }
-
-        public static int PerformCloudBackups(List<TrackedGame> games, string cloudDestinationPath)
-        {
-            if (string.IsNullOrWhiteSpace(cloudDestinationPath)) return 0;
-            int successCount = 0;
-            string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-
-            try
-            {
-                Directory.CreateDirectory(cloudDestinationPath);
-
-                foreach (var game in games)
-                {
-                    try
-                    {
-                        string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-                        // Clean filename safe characters
-                        string safeGameName = string.Join("_", game.Name.Split(Path.GetInvalidFileNameChars()));
-                        
-                        string tempStage = Path.Combine(Path.GetTempPath(), $"TrackerBackupStage_{safeGameName}_{Guid.NewGuid()}");
-                        if (Directory.Exists(tempStage)) Directory.Delete(tempStage, true);
-                        Directory.CreateDirectory(tempStage);
-
-                        bool gameHasFiles = false;
-
-                        // 1. Check Goldberg save folder
-                        string goldbergDir = Path.Combine(appData, "Goldberg SteamEmu Saves", game.AppId);
-                        if (Directory.Exists(goldbergDir) && Directory.EnumerateFiles(goldbergDir, "*.*", SearchOption.AllDirectories).Any())
-                        {
-                            CopyDirectory(goldbergDir, Path.Combine(tempStage, "Goldberg", game.AppId));
-                            gameHasFiles = true;
-                        }
-
-                        // 2. Check INI Emu save folders
-                        var emuDictionary = new Dictionary<string, string>
-                        {
-                            { "CODEX", Path.Combine(publicDocs, "Documents", "Steam", "CODEX", game.AppId) },
-                            { "RUNE", Path.Combine(publicDocs, "Documents", "Steam", "RUNE", game.AppId) },
-                            { "FLT", Path.Combine(publicDocs, "Documents", "Steam", "FLT", game.AppId) },
-                            { "TENOKE", Path.Combine(publicDocs, "Documents", "Steam", "TENOKE", game.AppId) },
-                            { "OnlineFix", Path.Combine(publicDocs, "Documents", "OnlineFix", game.AppId) }
-                        };
-
-                        foreach (var kvp in emuDictionary)
-                        {
-                            if (Directory.Exists(kvp.Value) && Directory.EnumerateFiles(kvp.Value, "*.*", SearchOption.AllDirectories).Any())
-                            {
-                                CopyDirectory(kvp.Value, Path.Combine(tempStage, kvp.Key, game.AppId));
-                                gameHasFiles = true;
-                            }
-                        }
-
-                        // 3. Special Case: Elden Ring (.sl2 saves in AppData\Roaming\EldenRing)
-                        if (game.AppId == "1245620" || game.Name.Contains("Elden Ring", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string eldenRingRoaming = Path.Combine(appData, "EldenRing");
-                            if (Directory.Exists(eldenRingRoaming) && Directory.EnumerateFiles(eldenRingRoaming, "*.*", SearchOption.AllDirectories).Any())
-                            {
-                                CopyDirectory(eldenRingRoaming, Path.Combine(tempStage, "EldenRing_Saves"));
-                                gameHasFiles = true;
-                            }
-                        }
-
-                        // 4. Special Case: Sekiro Saves
-                        if (game.AppId == "814380" || game.Name.Contains("Sekiro", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string sekiroAppDir = Path.Combine(appData, "Sekiro");
-                            if (Directory.Exists(sekiroAppDir) && Directory.EnumerateFiles(sekiroAppDir, "*.*", SearchOption.AllDirectories).Any())
-                            {
-                                CopyDirectory(sekiroAppDir, Path.Combine(tempStage, "Sekiro_Saves"));
-                                gameHasFiles = true;
-                            }
-                        }
-
-                        // Zip only if there is data to backup
-                        if (gameHasFiles)
-                        {
-                            string zipFilePath = Path.Combine(cloudDestinationPath, $"Save_{safeGameName}_{timestamp}.zip");
-
-                            if (File.Exists(zipFilePath)) File.Delete(zipFilePath);
-                            ZipFile.CreateFromDirectory(tempStage, zipFilePath, CompressionLevel.Optimal, false);
-
-                            // ROTATION CLEANUP: Keep only the 5 most recent backups for THIS game in the cloud folder
-                            var backupFiles = new DirectoryInfo(cloudDestinationPath)
-                                .GetFiles($"Save_{safeGameName}_*.zip")
-                                .OrderByDescending(f => f.CreationTime)
-                                .ToList();
-
-                            if (backupFiles.Count > 5)
-                            {
-                                for (int i = 5; i < backupFiles.Count; i++)
-                                {
-                                    try { backupFiles[i].Delete(); } catch { }
-                                }
-                            }
-
-                            successCount++;
-                        }
-
-                        // Cleanup temp folder
-                        try { Directory.Delete(tempStage, true); } catch { }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[Cloud Backup Error - {game.Name}] {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Cloud Backup System Error] {ex.Message}");
-            }
-
-            return successCount;
-        }
-
-        private static void CopyDirectory(string sourceDir, string targetDir)
-        {
-            Directory.CreateDirectory(targetDir);
-            foreach (string file in Directory.GetFiles(sourceDir))
-            {
-                string targetFilePath = Path.Combine(targetDir, Path.GetFileName(file));
-                File.Copy(file, targetFilePath, true);
-            }
-            foreach (string subDir in Directory.GetDirectories(sourceDir))
-            {
-                string targetSubDir = Path.Combine(targetDir, Path.GetFileName(subDir));
-                CopyDirectory(subDir, targetSubDir);
             }
         }
 
@@ -260,6 +127,7 @@ namespace AchievementTracker
             if (!File.Exists(filePath)) return;
             try
             {
+                // Basic retry logic for file locks
                 for (int i = 0; i < 3; i++)
                 {
                     try
@@ -296,14 +164,10 @@ namespace AchievementTracker
                     {
                         previousState[stateKey] = true; 
                         TriggerUI(appId, achKey);
-
-                        if (dashboard != null && !string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
-                        {
-                            Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
-                        }
                     }
                     else if (!isEarned && previousState.ContainsKey(stateKey))
                     {
+                        // Delete from memory so you can re-test it using Notepad!
                         previousState[stateKey] = false; 
                     }
                 }
@@ -369,17 +233,14 @@ namespace AchievementTracker
                         {
                             previousState[stateKey] = true; 
                             TriggerUI(appId, achKey);
-
-                            if (dashboard != null && !string.IsNullOrWhiteSpace(dashboard.SavedCloudPath))
-                            {
-                                Task.Run(() => PerformCloudBackups(dashboard.GetTrackedGames(), dashboard.SavedCloudPath));
-                            }
                         }
                     }
                     else if ((tLine == "achieved=0" || tLine.EndsWith("=0") || tLine == "achieved=false" || tLine.EndsWith("=false")) && !string.IsNullOrEmpty(currentSection))
                     {
                         string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
                         string stateKey = appId + "_" + achKey; 
+                        
+                        // Delete from memory so you can re-test it using Notepad!
                         previousState[stateKey] = false; 
                     }
                 }
@@ -397,13 +258,6 @@ namespace AchievementTracker
 
         static void LoadTranslator()
         {
-            if (!File.Exists(dictionaryPath))
-            {
-                var defaultDictionary = new Dictionary<string, string>();
-                string json = JsonSerializer.Serialize(defaultDictionary, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(dictionaryPath, json);
-            }
-
             if (File.Exists(dictionaryPath)) {
                 try {
                     string json = File.ReadAllText(dictionaryPath);
@@ -459,15 +313,52 @@ namespace AchievementTracker
             } catch { }
         }
 
+        // ---- POPUPS ----
+        // One worker thread shows popups one after another, so several unlocks at once
+        // no longer pile up on top of each other (the old code started a new thread per popup).
+        static readonly BlockingCollection<(string Name, string Icon)> popupQueue = new BlockingCollection<(string Name, string Icon)>();
+
+        static void StartPopupWorker()
+        {
+            Thread worker = new Thread(() =>
+            {
+                foreach (var item in popupQueue.GetConsumingEnumerable())
+                {
+                    try
+                    {
+                        using OverlayWindow window = new OverlayWindow(item.Name, item.Icon);
+                        Application.Run(window);
+                    }
+                    catch { }
+                }
+            });
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.IsBackground = true;
+            worker.Name = "PopupWorker";
+            worker.Start();
+        }
+
         static void ShowPopup(string achievementName, string iconUrl)
         {
-            Thread uiThread = new Thread(() =>
+            AppSettings settings = AppSettings.Current;
+            if (settings.ObsOverlay) OverlayServer.Broadcast(achievementName, iconUrl);   // browser source (OBS)
+            if (settings.DesktopPopup) popupQueue.Add((achievementName, iconUrl));         // on-screen popup
+        }
+
+        public static void ShowTestPopup() => ShowPopup("Test Achievement", "");
+
+        // Starts or stops the local OBS overlay server according to the current settings.
+        public static void ApplyOverlaySettings()
+        {
+            AppSettings settings = AppSettings.Current;
+            if (settings.ObsOverlay)
             {
-                OverlayWindow window = new OverlayWindow(achievementName, iconUrl);
-                Application.Run(window);
-            });
-            uiThread.SetApartmentState(ApartmentState.STA);
-            uiThread.Start();
+                if (!OverlayServer.IsRunning) OverlayServer.Start(settings.ObsPort);
+            }
+            else
+            {
+                OverlayServer.Stop();
+            }
         }
     }
 }

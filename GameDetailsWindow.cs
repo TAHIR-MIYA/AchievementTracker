@@ -1,50 +1,51 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AchievementTracker
 {
+    public class AchievementRow
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public bool Unlocked { get; set; }
+        public bool Hidden { get; set; }
+        public Image? Icon { get; set; }
+    }
+
     public class GameDetailsWindow : Form
     {
-        [DllImport("DwmApi")]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, int[] attrValue, int attrSize);
-
         private TrackedGame game;
         private string apiKey;
-        private ListView achievementListView = new ListView();
         private HashSet<string> unlockedAchievements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly HttpClient httpClient = new HttpClient();
-        private Label progressLabel = new Label();
-        private ImageList achievementIcons = new ImageList();
 
-        // Steam Palette
-        private Color steamBg = ColorTranslator.FromHtml("#1b2838");
-        private Color steamPanel = ColorTranslator.FromHtml("#171a21");
-        private Color steamText = ColorTranslator.FromHtml("#c7d5e0");
-        private Color steamBlue = ColorTranslator.FromHtml("#66c0f4");
+        private RowListBox achievementList = null!;
+        private ProgressRing ring = null!;
+        private Label subtitleLabel = null!;
 
         public GameDetailsWindow(TrackedGame game, string apiKey)
         {
             this.game = game;
             this.apiKey = apiKey;
 
-            this.Text = $"{game.Name} - Activity";
-            this.Size = new Size(850, 650);
-            this.BackColor = steamBg;
-            this.ForeColor = steamText;
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.Sizable; 
-            this.MaximizeBox = true; 
-
-            if (Environment.OSVersion.Version.Major >= 10)
-                DwmSetWindowAttribute(this.Handle, 20, new[] { 1 }, 4);
+            Text = game.Name + " - Achievements";
+            ClientSize = new Size(900, 640);
+            MinimumSize = new Size(700, 520);
+            BackColor = Theme.Base;
+            ForeColor = Theme.Text;
+            Font = Theme.Body;
+            StartPosition = FormStartPosition.CenterParent;
+            DoubleBuffered = true;
+            try { if (File.Exists("app_icon.ico")) Icon = new Icon("app_icon.ico"); } catch { }
+            Theme.StyleWindow(this);
 
             InitializeUI();
             LoadAchievementsAsync();
@@ -52,65 +53,108 @@ namespace AchievementTracker
 
         private void InitializeUI()
         {
-            // Top Banner Area
-            Panel bannerPanel = new Panel { Size = new Size(850, 100), BackColor = steamPanel, Dock = DockStyle.Top };
-            
+            // List area (Fill) is added first, header (Top) second.
+            Panel listArea = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Base, Padding = new Padding(24, 16, 24, 24) };
+            achievementList = new RowListBox { Dock = DockStyle.Fill, ItemHeight = 84, BackColor = Theme.Base };
+            achievementList.DrawItem += AchievementList_DrawItem;
+            listArea.Controls.Add(achievementList);
+
+            Panel headerPanel = new Panel { Dock = DockStyle.Top, Height = 132, BackColor = Theme.Surface };
+            ring = new ProgressRing { Size = new Size(84, 84), Location = new Point(28, 24), Backdrop = Theme.Surface };
+
             Label titleLabel = new Label
             {
-                Text = game.Name, Font = new Font("Segoe UI", 24, FontStyle.Bold),
-                Location = new Point(20, 20), AutoSize = true, ForeColor = Color.White
+                Text = game.Name,
+                Font = Theme.Title,
+                ForeColor = Theme.Text,
+                BackColor = Theme.Surface,
+                AutoEllipsis = true,
+                Location = new Point(136, 32),
+                Size = new Size(700, 36),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            bannerPanel.Controls.Add(titleLabel);
-
-            progressLabel = new Label
+            subtitleLabel = new Label
             {
-                Text = "Calculating progress...", Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Location = new Point(24, 65), AutoSize = true, ForeColor = steamBlue
+                Text = "Loading achievements...",
+                Font = Theme.Body,
+                ForeColor = Theme.Muted,
+                BackColor = Theme.Surface,
+                AutoEllipsis = true,
+                Location = new Point(138, 74),
+                Size = new Size(700, 24),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            bannerPanel.Controls.Add(progressLabel);
-            this.Controls.Add(bannerPanel);
 
-            // Achievement List Area
-            achievementListView = new ListView
+            headerPanel.Controls.Add(ring);
+            headerPanel.Controls.Add(titleLabel);
+            headerPanel.Controls.Add(subtitleLabel);
+            headerPanel.Resize += (s, e) =>
             {
-                Location = new Point(20, 120),
-                Size = new Size(790, 470),
-                BackColor = steamBg,
-                ForeColor = steamText,
-                Font = new Font("Segoe UI", 10),
-                View = View.Details,
-                FullRowSelect = true,
-                
-                // THIS HIDES THE UGLY WHITE BAR:
-                HeaderStyle = ColumnHeaderStyle.None, 
-                BorderStyle = BorderStyle.None,
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right 
+                titleLabel.Width = Math.Max(100, headerPanel.Width - 136 - 28);
+                subtitleLabel.Width = Math.Max(100, headerPanel.Width - 138 - 28);
             };
 
-            // Set up columns with better default spacing
-            achievementListView.Columns.Add("Achievement Name", 250);
-            achievementListView.Columns.Add("Description", 400);
-            achievementListView.Columns.Add("Status", 120);
+            Controls.Add(listArea);
+            Controls.Add(headerPanel);
+        }
 
-            // DYNAMIC RESIZING: Make the description column stretch to fill the screen
-            this.Resize += (s, e) => {
-                if (achievementListView.Columns.Count >= 3) {
-                    // Calculate remaining space and stretch the middle column
-                    int remainingWidth = achievementListView.Width - achievementListView.Columns[0].Width - achievementListView.Columns[2].Width - 25;
-                    achievementListView.Columns[1].Width = Math.Max(200, remainingWidth);
+        private void AchievementList_DrawItem(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= achievementList.Items.Count) return;
+            AchievementRow? row = achievementList.Items[e.Index] as AchievementRow;
+            if (row == null) return;
+
+            Graphics g = e.Graphics;
+            bool hover = achievementList.HoverIndex == e.Index;
+            Rectangle r = new Rectangle(e.Bounds.X, e.Bounds.Y + 4, e.Bounds.Width - 2, e.Bounds.Height - 8);
+
+            using (GraphicsPath path = Theme.RoundedRect(r, 12f))
+            using (SolidBrush fill = new SolidBrush(hover ? Theme.Raised : Theme.Surface))
+            using (Pen pen = new Pen(row.Unlocked ? Theme.Blend(Theme.Border, Theme.Accent, 0.55f) : Theme.Border, 1f))
+            {
+                g.FillPath(fill, path);
+                g.DrawPath(pen, path);
+            }
+
+            // Icon
+            Rectangle iconRect = new Rectangle(r.X + 14, r.Y + (r.Height - 52) / 2, 52, 52);
+            using (GraphicsPath iconPath = Theme.RoundedRect(iconRect, 10f))
+            {
+                if (row.Icon != null)
+                {
+                    GraphicsState state = g.Save();
+                    g.SetClip(iconPath);
+                    g.DrawImage(row.Icon, iconRect);
+                    g.Restore(state);
                 }
-            };
+                else
+                {
+                    using (SolidBrush placeholder = new SolidBrush(Theme.Raised)) g.FillPath(placeholder, iconPath);
+                }
+            }
 
-            achievementIcons.ImageSize = new Size(48, 48);
-            achievementIcons.ColorDepth = ColorDepth.Depth32Bit;
-            achievementListView.SmallImageList = achievementIcons;
+            int textX = iconRect.Right + 16;
+            int statusWidth = 110;
+            int textWidth = Math.Max(40, r.Right - textX - statusWidth - 16);
 
-            this.Controls.Add(achievementListView);
+            Color nameColor = row.Unlocked ? Theme.Text : Theme.TextDim;
+            Theme.DrawText(g, row.Name, Theme.BodyStrong, nameColor, new Rectangle(textX, r.Y + 12, textWidth, 22));
+
+            string description = row.Hidden && !row.Unlocked ? "Hidden achievement. Keep playing to reveal it." : row.Description;
+            TextRenderer.DrawText(g, description, Theme.Small, new Rectangle(textX, r.Y + 36, textWidth, 32), Theme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+            Rectangle statusRect = new Rectangle(r.Right - statusWidth - 16, r.Y, statusWidth, r.Height);
+            Theme.DrawText(g, row.Unlocked ? "Unlocked" : "Locked", Theme.BodyStrong, row.Unlocked ? Theme.Accent : Theme.Muted, statusRect, TextFormatFlags.Right);
         }
 
         private async void LoadAchievementsAsync()
         {
-            if (string.IsNullOrWhiteSpace(apiKey)) return;
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                subtitleLabel.Text = "Add your Steam API key in Settings to see achievements.";
+                return;
+            }
             ScanLocalEmulatorSaves();
             await FetchAndPopulateSteamData();
         }
@@ -177,102 +221,95 @@ namespace AchievementTracker
                 string url = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={apiKey}&appid={game.AppId}";
                 HttpResponseMessage response = await httpClient.GetAsync(url);
 
-                if (response.IsSuccessStatusCode)
+                if (!response.IsSuccessStatusCode)
                 {
-                    string json = await response.Content.ReadAsStringAsync();
-                    using JsonDocument doc = JsonDocument.Parse(json);
+                    subtitleLabel.Text = "Steam rejected the request. Check your API key and the App ID.";
+                    return;
+                }
 
-                    if (doc.RootElement.TryGetProperty("game", out JsonElement gameElement) &&
-                        gameElement.TryGetProperty("availableGameStats", out JsonElement statsElement) &&
-                        statsElement.TryGetProperty("achievements", out JsonElement achievementsElement))
-                    {
-                        int unlockedCount = 0; int totalCount = 0;
-                        achievementListView.Items.Clear();
+                string json = await response.Content.ReadAsStringAsync();
+                using JsonDocument doc = JsonDocument.Parse(json);
 
-                        // Create temporary lists to sort them nicely without using buggy Windows Groups
-                        List<ListViewItem> unlockedItems = new List<ListViewItem>();
-                        List<ListViewItem> lockedItems = new List<ListViewItem>();
-                        List<ListViewItem> hiddenItems = new List<ListViewItem>();
+                if (!(doc.RootElement.TryGetProperty("game", out JsonElement gameElement) &&
+                      gameElement.TryGetProperty("availableGameStats", out JsonElement statsElement) &&
+                      statsElement.TryGetProperty("achievements", out JsonElement achievementsElement)))
+                {
+                    subtitleLabel.Text = "No achievements found for this App ID.";
+                    return;
+                }
 
-                        foreach (JsonElement ach in achievementsElement.EnumerateArray())
-                        {
-                            totalCount++;
-                            string internalName = ach.GetProperty("name").GetString() ?? "";
-                            string displayName = ach.GetProperty("displayName").GetString() ?? "Unknown";
-                            string description = ach.TryGetProperty("description", out JsonElement descElement) ? descElement.GetString() ?? "" : "";
-                            bool isHidden = ach.TryGetProperty("hidden", out JsonElement hiddenElement) && hiddenElement.GetInt32() == 1;
-                            
-                            string iconUrl = ach.TryGetProperty("icon", out JsonElement iconEl) ? iconEl.GetString() ?? "" : "";
-                            string iconGrayUrl = ach.TryGetProperty("icongray", out JsonElement iconGrayEl) ? iconGrayEl.GetString() ?? "" : "";
+                int unlockedCount = 0;
+                int totalCount = 0;
+                List<(AchievementRow Row, string IconUrl)> unlocked = new List<(AchievementRow, string)>();
+                List<(AchievementRow Row, string IconUrl)> locked = new List<(AchievementRow, string)>();
+                List<(AchievementRow Row, string IconUrl)> hidden = new List<(AchievementRow, string)>();
 
-                            bool isUnlocked = unlockedAchievements.Contains(internalName);
-                            if (isUnlocked) unlockedCount++;
+                foreach (JsonElement ach in achievementsElement.EnumerateArray())
+                {
+                    totalCount++;
+                    string internalName = ach.GetProperty("name").GetString() ?? "";
+                    string displayName = ach.GetProperty("displayName").GetString() ?? "Unknown";
+                    string description = ach.TryGetProperty("description", out JsonElement descElement) ? descElement.GetString() ?? "" : "";
+                    bool isHidden = ach.TryGetProperty("hidden", out JsonElement hiddenElement) && hiddenElement.GetInt32() == 1;
+                    string iconUrl = ach.TryGetProperty("icon", out JsonElement iconEl) ? iconEl.GetString() ?? "" : "";
+                    string iconGrayUrl = ach.TryGetProperty("icongray", out JsonElement iconGrayEl) ? iconGrayEl.GetString() ?? "" : "";
 
-                            ListViewItem item = new ListViewItem(displayName);
-                            item.Font = new Font("Segoe UI", 11, FontStyle.Bold); // Make titles bolder
-                            
-                            if (isUnlocked)
-                            {
-                                item.SubItems.Add(description);
-                                item.SubItems.Add("✓ Unlocked");
-                                item.ForeColor = steamBlue; 
-                                unlockedItems.Add(item);
-                            }
-                            else if (isHidden)
-                            {
-                                item.SubItems.Add("Hidden Achievement - Keep playing to reveal!");
-                                item.SubItems.Add("Locked");
-                                item.ForeColor = Color.DimGray;
-                                hiddenItems.Add(item);
-                            }
-                            else
-                            {
-                                item.SubItems.Add(description);
-                                item.SubItems.Add("Locked");
-                                item.ForeColor = steamText;
-                                lockedItems.Add(item);
-                            }
+                    bool isUnlocked = unlockedAchievements.Contains(internalName);
+                    if (isUnlocked) unlockedCount++;
 
-                            string targetIconUrl = isUnlocked ? iconUrl : iconGrayUrl;
-                            if (!string.IsNullOrEmpty(targetIconUrl))
-                            {
-                                string imageKey = internalName + (isUnlocked ? "_unlocked" : "_locked");
-                                _ = LoadImageAsync(targetIconUrl, imageKey, item);
-                            }
-                        }
-                        
-                        // Add them to the list in order: Unlocked first, then locked, then hidden
-                        achievementListView.Items.AddRange(unlockedItems.ToArray());
-                        achievementListView.Items.AddRange(lockedItems.ToArray());
-                        achievementListView.Items.AddRange(hiddenItems.ToArray());
-                        
-                        progressLabel.Text = $"{unlockedCount} / {totalCount} ACHIEVEMENTS EARNED";
-                        
-                        // Trigger a resize to fill the screen correctly right at launch
-                        this.OnResize(EventArgs.Empty); 
-                    }
+                    AchievementRow row = new AchievementRow { Name = displayName, Description = description, Unlocked = isUnlocked, Hidden = isHidden };
+                    string targetIcon = isUnlocked ? iconUrl : iconGrayUrl;
+
+                    if (isUnlocked) unlocked.Add((row, targetIcon));
+                    else if (isHidden) hidden.Add((row, targetIcon));
+                    else locked.Add((row, targetIcon));
+                }
+
+                // Unlocked first, then locked, then hidden
+                List<(AchievementRow Row, string IconUrl)> ordered = unlocked.Concat(locked).Concat(hidden).ToList();
+
+                achievementList.BeginUpdate();
+                achievementList.Items.Clear();
+                foreach (var item in ordered) achievementList.Items.Add(item.Row);
+                achievementList.EndUpdate();
+
+                ring.Value = totalCount == 0 ? 0f : (float)unlockedCount / totalCount;
+                subtitleLabel.Text = unlockedCount + " of " + totalCount + " achievements unlocked";
+
+                foreach (var item in ordered)
+                {
+                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row);
                 }
             }
-            catch { MessageBox.Show("Failed to connect to Steam.", "Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            catch
+            {
+                if (!IsDisposed) subtitleLabel.Text = "Couldn't reach Steam. Check your connection and API key.";
+            }
         }
 
-        private async Task LoadImageAsync(string url, string key, ListViewItem item)
+        private async Task LoadIconAsync(string url, AchievementRow row)
         {
             try
             {
                 byte[] imageBytes = await httpClient.GetByteArrayAsync(url);
-                using MemoryStream ms = new MemoryStream(imageBytes);
-                Image img = Image.FromStream(ms);
-                
-                this.Invoke(new Action(() => {
-                    if (!achievementIcons.Images.ContainsKey(key))
-                    {
-                        achievementIcons.Images.Add(key, img);
-                    }
-                    item.ImageKey = key;
-                }));
+                if (IsDisposed) return;
+                using (MemoryStream ms = new MemoryStream(imageBytes))
+                using (Image img = Image.FromStream(ms))
+                {
+                    row.Icon = new Bitmap(img);   // copy, so the image doesn't depend on the stream
+                }
+                achievementList.Invalidate();
             }
             catch { }
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            foreach (object item in achievementList.Items)
+            {
+                (item as AchievementRow)?.Icon?.Dispose();
+            }
+            base.OnFormClosed(e);
         }
     }
 }
