@@ -12,8 +12,8 @@ namespace AchievementTracker
 {
     class Program
     {
-        static string dictionaryPath = "achievement_dictionary.json";
-        static string iconsPath = "achievement_icons.json";
+        static string dictionaryPath = AppPaths.InBase("achievement_dictionary.json");
+        static string iconsPath = AppPaths.InBase("achievement_icons.json");
         
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
         static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
@@ -27,27 +27,34 @@ namespace AchievementTracker
         [STAThread]
         static void Main(string[] args)
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
+            try
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
 
-            SetupSystemTray();
-            LoadTranslator();
-            StartPopupWorker();
-            ApplyOverlaySettings();
+                SetupSystemTray();
+                LoadTranslator();
+                StartPopupWorker();
+                ApplyOverlaySettings();
 
-            dashboard = new MainWindow();
-            UpdateWatchers(dashboard.GetTrackedGames());
-            
-            TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
+                dashboard = new MainWindow();
+                UpdateWatchers(dashboard.GetTrackedGames());
 
-            Application.Run(dashboard); 
+                TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
+
+                Application.Run(dashboard);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString(), "Achievement Tracker startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         static void SetupSystemTray()
         {
             trayIcon = new NotifyIcon()
             {
-                Icon = File.Exists("app_icon.ico") ? new Icon("app_icon.ico") : SystemIcons.Application,
+                Icon = AppPaths.LoadIcon() ?? SystemIcons.Application,
                 ContextMenuStrip = new ContextMenuStrip(),
                 Visible = true,
                 Text = "Universal Achievement Tracker"
@@ -78,18 +85,22 @@ namespace AchievementTracker
 
             foreach (var game in games)
             {
+                string appId = game.AppId.Trim();
+                if (!uint.TryParse(appId, out _)) continue;
+                game.AppId = appId;
+
                 // 1. WATCH GOLDBERG
-                string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", game.AppId);
+                string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
                 Directory.CreateDirectory(goldbergDir); 
-                LoadBaselineState(game.AppId, Path.Combine(goldbergDir, "achievements.json"));
-                AttachWatcher(goldbergDir, "*.json", (s, e) => OnAchievementFileChanged(s, e, game.AppId));
+                LoadBaselineState(appId, Path.Combine(goldbergDir, "achievements.json"));
+                AttachWatcher(goldbergDir, "*.json", (s, e) => OnAchievementFileChanged(s, e, appId));
 
                 // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
                 string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
                 
                 foreach (string emu in emuFolders)
                 {
-                    string emuDir = Path.Combine(publicDocs, "Documents", emu, game.AppId);
+                    string emuDir = Path.Combine(publicDocs, "Documents", emu, appId);
                     Directory.CreateDirectory(emuDir);
 
                     // Pre-scan directories to set baseline
@@ -98,13 +109,13 @@ namespace AchievementTracker
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
                     if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "Stats", "Achievements"); 
                     
-                    ParseIniForBaseline(game.AppId, iniPath);
+                    ParseIniForBaseline(appId, iniPath);
 
                     // Watch the whole directory including subfolders to catch everything
                     AttachWatcher(emuDir, "*.*", (s, e) => {
                         string lowerName = e.Name?.ToLower() ?? "";
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
-                            ParseIniForChanges(game.AppId, e.FullPath);
+                            ParseIniForChanges(appId, e.FullPath);
                     });
                 }
             }

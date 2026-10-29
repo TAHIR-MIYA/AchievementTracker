@@ -100,11 +100,12 @@ namespace AchievementTracker
             }
 
             // Fallback icon (used until / unless the Steam icon downloads).
-            string localIcon = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
-            if (File.Exists(localIcon))
+            try
             {
-                try { _icon = new Icon(localIcon, new Size(64, 64)).ToBitmap(); } catch { }
+                System.Drawing.Icon? appIcon = AppPaths.LoadIcon();
+                if (appIcon != null) _icon = new System.Drawing.Icon(appIcon, new Size(64, 64)).ToBitmap();
             }
+            catch { }
 
             _animTimer.Tick += AnimTimer_Tick;
             this.Load += OverlayWindow_Load;
@@ -194,14 +195,9 @@ namespace AchievementTracker
             int volume = AppSettings.Current.SoundVolume;
             if (volume <= 0) return;
 
-            // Smart Pathing: Check the build folder first, then the working directory
-            string audioPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "unlock.mp3");
-            if (!File.Exists(audioPath))
-            {
-                audioPath = Path.Combine(Environment.CurrentDirectory, "unlock.mp3");
-            }
-
-            if (File.Exists(audioPath))
+            // The sound lives next to the exe (copied there by the build)
+            string? audioPath = AppPaths.FindAsset("unlock.mp3");
+            if (audioPath != null)
             {
                 // Close any stuck audio streams first, then play (MCI volume is 0-1000)
                 mciSendString("close unlockAudio", null, 0, IntPtr.Zero);

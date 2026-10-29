@@ -147,9 +147,14 @@ namespace AchievementTracker
 
                 if (path == "/icon.ico")
                 {
-                    string? ico = FindAsset("app_icon.ico");
-                    if (ico == null) { res.StatusCode = 404; res.Close(); return; }
-                    byte[] iconBytes = File.ReadAllBytes(ico);
+                    byte[] iconBytes;
+                    using (System.Drawing.Icon? appIcon = AppPaths.LoadIcon())
+                    using (MemoryStream iconStream = new MemoryStream())
+                    {
+                        if (appIcon == null) { res.StatusCode = 404; res.Close(); return; }
+                        appIcon.Save(iconStream);
+                        iconBytes = iconStream.ToArray();
+                    }
                     res.ContentType = "image/x-icon";
                     res.ContentLength64 = iconBytes.Length;
                     res.OutputStream.Write(iconBytes, 0, iconBytes.Length);
@@ -177,13 +182,7 @@ namespace AchievementTracker
             }
         }
 
-        private static string? FindAsset(string fileName)
-        {
-            string a = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, fileName);
-            if (File.Exists(a)) return a;
-            string b = Path.Combine(Environment.CurrentDirectory, fileName);
-            return File.Exists(b) ? b : null;
-        }
+        private static string? FindAsset(string fileName) => AppPaths.FindAsset(fileName);
 
         // URL options:  ?pos=top-right | top-left | bottom-right | bottom-left   &sound=1   &volume=0.0-1.0
         private const string OverlayHtml = """

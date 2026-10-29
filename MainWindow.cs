@@ -20,7 +20,7 @@ namespace AchievementTracker
     public class MainWindow : Form
     {
         private List<TrackedGame> games = new List<TrackedGame>();
-        private readonly string gamesFilePath = "tracked_games.json";
+        private readonly string gamesFilePath = AppPaths.InBase("tracked_games.json");
         public string SavedApiKey { get; private set; } = "";
 
         // Header
@@ -62,7 +62,8 @@ namespace AchievementTracker
             StartPosition = FormStartPosition.CenterScreen;
             DoubleBuffered = true;
 
-            try { if (File.Exists("app_icon.ico")) Icon = new Icon("app_icon.ico"); } catch { }
+            System.Drawing.Icon? appIcon = AppPaths.LoadIcon();
+            if (appIcon != null) Icon = appIcon;
             Theme.StyleWindow(this);
 
             LoadGames();
@@ -138,7 +139,8 @@ namespace AchievementTracker
             logo = new PictureBox { Size = new Size(32, 32), SizeMode = PictureBoxSizeMode.Zoom, BackColor = Theme.Base };
             try
             {
-                if (File.Exists("app_icon.ico")) logo.Image = new Icon("app_icon.ico", new Size(32, 32)).ToBitmap();
+                System.Drawing.Icon? logoIcon = AppPaths.LoadIcon();
+                if (logoIcon != null) logo.Image = new System.Drawing.Icon(logoIcon, new Size(32, 32)).ToBitmap();
             }
             catch { }
             logo.Visible = logo.Image != null;
@@ -457,7 +459,7 @@ namespace AchievementTracker
 
         private void AutoDetect(FlatButton button)
         {
-            using (OpenFileDialog ofd = new OpenFileDialog() { Filter = "Game Executable (*.exe)|*.exe", Title = "Select the game's .exe" })
+            using (OpenFileDialog ofd = new OpenFileDialog() { Filter = "Game Executable (*.exe)|*.exe", Title = "Select the game's .exe", RestoreDirectory = true })
             {
                 if (ofd.ShowDialog() != DialogResult.OK) return;
 
@@ -716,11 +718,20 @@ namespace AchievementTracker
                 try
                 {
                     string json = File.ReadAllText(gamesFilePath);
-                    if (!string.IsNullOrWhiteSpace(json))
+                    if (!string.IsNullOrWhiteSpace(json)) games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
+                    bool normalized = false;
+                    foreach (TrackedGame game in games)
                     {
-                        games = JsonSerializer.Deserialize<List<TrackedGame>>(json) ?? new List<TrackedGame>();
-                        foreach (TrackedGame game in games) game.AppId = game.AppId?.Trim() ?? "";
-                        games = games.Where(game => game.AppId.Length > 0 && game.AppId.All(char.IsDigit)).ToList();
+                        string appId = game.AppId.Trim();
+                        if (appId != game.AppId)
+                        {
+                            game.AppId = appId;
+                            normalized = true;
+                        }
+                    }
+                    if (normalized)
+                    {
+                        try { SaveGames(); } catch { }
                     }
                 }
                 catch { games = new List<TrackedGame>(); }

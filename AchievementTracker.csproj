@@ -9,4 +9,13 @@
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Files the app needs next to the .exe (also copied by "dotnet publish") -->
+  <ItemGroup>
+    <None Update="unlock.mp3" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="app_icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="achievement_dictionary.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="achievement_icons.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="tracked_games.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

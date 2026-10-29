@@ -44,7 +44,8 @@ namespace AchievementTracker
             Font = Theme.Body;
             StartPosition = FormStartPosition.CenterParent;
             DoubleBuffered = true;
-            try { if (File.Exists("app_icon.ico")) Icon = new Icon("app_icon.ico"); } catch { }
+            System.Drawing.Icon? appIcon = AppPaths.LoadIcon();
+            if (appIcon != null) Icon = appIcon;
             Theme.StyleWindow(this);
 
             InitializeUI();
