@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -17,7 +17,7 @@ namespace AchievementTracker
         
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
         static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
-        static Dictionary<string, bool> previousState = new Dictionary<string, bool>();
+        static ConcurrentDictionary<string, bool> previousState = new ConcurrentDictionary<string, bool>();   // watchers run on several threads
 
         static NotifyIcon? trayIcon;
         static MainWindow? dashboard;
@@ -186,25 +186,12 @@ namespace AchievementTracker
             if (!File.Exists(filePath)) return;
             try
             {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var sr = new StreamReader(fs);
-                string? line;
-                string currentSection = "";
-
-                while ((line = sr.ReadLine()) != null)
+                foreach (var entry in AchievementIni.Read(filePath))
                 {
-                    string originalLine = line.Trim();
-                    string tLine = originalLine.ToLower();
-
-                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
-                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
-                    else if ((tLine == "achieved=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
-                    {
-                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
-                        previousState[appId + "_" + achKey] = true; 
-                    }
+                    if (entry.Value) previousState[appId + "_" + entry.Key] = true;
                 }
-            } catch { }
+            }
+            catch { }
         }
 
         static void ParseIniForChanges(string appId, string filePath)
@@ -212,39 +199,25 @@ namespace AchievementTracker
             Thread.Sleep(50);
             try
             {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var sr = new StreamReader(fs);
-                string? line;
-                string currentSection = "";
-
-                while ((line = sr.ReadLine()) != null)
+                foreach (var entry in AchievementIni.Read(filePath))
                 {
-                    string originalLine = line.Trim();
-                    string tLine = originalLine.ToLower();
-
-                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
-                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
-                    else if ((tLine == "achieved=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
+                    string stateKey = appId + "_" + entry.Key;
+                    if (entry.Value)
                     {
-                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
-                        string stateKey = appId + "_" + achKey; 
-
-                        if (!previousState.ContainsKey(stateKey) || !previousState[stateKey])
+                        if (!previousState.TryGetValue(stateKey, out bool wasUnlocked) || !wasUnlocked)
                         {
-                            previousState[stateKey] = true; 
-                            TriggerUI(appId, achKey);
+                            previousState[stateKey] = true;
+                            TriggerUI(appId, entry.Key);
                         }
                     }
-                    else if ((tLine == "achieved=0" || tLine.EndsWith("=0") || tLine == "achieved=false" || tLine.EndsWith("=false")) && !string.IsNullOrEmpty(currentSection))
+                    else
                     {
-                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
-                        string stateKey = appId + "_" + achKey; 
-                        
-                        // Delete from memory so you can re-test it using Notepad!
-                        previousState[stateKey] = false; 
+                        // Forget it, so you can re-test by editing the file in Notepad.
+                        previousState[stateKey] = false;
                     }
                 }
-            } catch { }
+            }
+            catch { }
         }
 
         static void TriggerUI(string appId, string achKey)

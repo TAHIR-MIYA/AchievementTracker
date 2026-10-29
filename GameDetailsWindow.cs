@@ -204,23 +204,14 @@ namespace AchievementTracker
                         string lowerFile = file.ToLower();
                         if (lowerFile.Contains("achievement") || lowerFile.Contains("stats"))
                         {
-                            try {
-                                string[] lines = File.ReadAllLines(file);
-                                string currentSection = "";
-                                foreach (string line in lines)
+                            try
+                            {
+                                foreach (var entry in AchievementIni.Read(file))
                                 {
-                                    string originalLine = line.Trim();
-                                    string tLine = originalLine.ToLower(); 
-
-                                    if (tLine.StartsWith("[") && tLine.EndsWith("]")) 
-                                        currentSection = originalLine.Substring(1, originalLine.Length - 2);
-                                    else if ((tLine == "achieved=1" || tLine.EndsWith("=1") || tLine == "achieved=true" || tLine.EndsWith("=true")) && !string.IsNullOrEmpty(currentSection) && tLine != "steamachievements")
-                                    {
-                                        string achKey = originalLine.Contains("=") && tLine.Split('=')[0] != "achieved" ? originalLine.Split('=')[0] : currentSection;
-                                        unlockedAchievements.Add(achKey);
-                                    }
+                                    if (entry.Value) unlockedAchievements.Add(entry.Key);
                                 }
-                            } catch { }
+                            }
+                            catch { }
                         }
                     }
                 }
