@@ -120,14 +120,27 @@ namespace AchievementTracker
             Rectangle iconRect = new Rectangle(r.X + 14, r.Y + (r.Height - 52) / 2, 52, 52);
             using (GraphicsPath iconPath = Theme.RoundedRect(iconRect, 10f))
             {
-                if (row.Icon != null)
+                bool drewIcon = false;
+                Image? icon = row.Icon;
+                if (icon != null)
                 {
                     GraphicsState state = g.Save();
-                    g.SetClip(iconPath);
-                    g.DrawImage(row.Icon, iconRect);
-                    g.Restore(state);
+                    try
+                    {
+                        g.SetClip(iconPath);
+                        g.DrawImage(icon, iconRect);
+                        drewIcon = true;
+                    }
+                    catch
+                    {
+                        row.Icon = null;   // the image was disposed or is invalid: fall back to the placeholder
+                    }
+                    finally
+                    {
+                        g.Restore(state);
+                    }
                 }
-                else
+                if (!drewIcon)
                 {
                     using (SolidBrush placeholder = new SolidBrush(Theme.Raised)) g.FillPath(placeholder, iconPath);
                 }
@@ -291,25 +304,51 @@ namespace AchievementTracker
         {
             try
             {
-                byte[] imageBytes = await httpClient.GetByteArrayAsync(url);
-                if (IsDisposed) return;
+                byte[] imageBytes = await httpClient.GetByteArrayAsync(url).ConfigureAwait(false);
+
+                Bitmap copy;
                 using (MemoryStream ms = new MemoryStream(imageBytes))
                 using (Image img = Image.FromStream(ms))
                 {
-                    row.Icon = new Bitmap(img);   // copy, so the image doesn't depend on the stream
+                    copy = new Bitmap(img);   // independent copy, doesn't depend on the stream
                 }
-                achievementList.Invalidate();
+
+                if (IsDisposed || !IsHandleCreated)
+                {
+                    copy.Dispose();
+                    return;
+                }
+
+                // Always hand the finished bitmap to the UI thread, which is the only thread that paints it.
+                BeginInvoke(new Action(() =>
+                {
+                    if (IsDisposed) { copy.Dispose(); return; }
+                    Image? previous = row.Icon;
+                    row.Icon = copy;
+                    achievementList.Invalidate();
+                    previous?.Dispose();
+                }));
             }
             catch { }
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        // Icons are released only after the list control itself is gone, so nothing can paint a disposed image.
+        protected override void Dispose(bool disposing)
         {
-            foreach (object item in achievementList.Items)
+            List<Image> icons = new List<Image>();
+            if (disposing && achievementList != null)
             {
-                (item as AchievementRow)?.Icon?.Dispose();
+                foreach (object item in achievementList.Items)
+                {
+                    if (item is AchievementRow row && row.Icon != null)
+                    {
+                        icons.Add(row.Icon);
+                        row.Icon = null;
+                    }
+                }
             }
-            base.OnFormClosed(e);
+            base.Dispose(disposing);
+            foreach (Image img in icons) img.Dispose();
         }
     }
 }

@@ -122,6 +122,7 @@ namespace AchievementTracker
                     if (IsDisposed || !IsHandleCreated) { copy.Dispose(); return; }
                     BeginInvoke(new Action(() =>
                     {
+                        if (IsDisposed) { copy.Dispose(); return; }
                         Image? old = _icon;
                         _icon = copy;
                         old?.Dispose();
@@ -223,17 +224,24 @@ namespace AchievementTracker
 
             // Icon (rounded)
             Rectangle iconRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
-            if (_icon != null)
+            bool drewIcon = false;
+            Image? icon = _icon;
+            if (icon != null)
             {
                 using (GraphicsPath clip = Theme.RoundedRect(iconRect, 10f))
                 {
                     GraphicsState state = g.Save();
-                    g.SetClip(clip);
-                    g.DrawImage(_icon, iconRect);
-                    g.Restore(state);
+                    try
+                    {
+                        g.SetClip(clip);
+                        g.DrawImage(icon, iconRect);
+                        drewIcon = true;
+                    }
+                    catch { _icon = null; }
+                    finally { g.Restore(state); }
                 }
             }
-            else
+            if (!drewIcon)
             {
                 using (GraphicsPath p = Theme.RoundedRect(iconRect, 10f))
                 using (SolidBrush b = new SolidBrush(Theme.Hover))
