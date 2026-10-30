@@ -247,7 +247,37 @@ namespace AchievementTracker
             string iconUrl = achievementIcons.ContainsKey(lookupKey) ? achievementIcons[lookupKey] : "";
             double? percent = achievementRarity.TryGetValue(lookupKey, out double p) ? p : (double?)null;
 
+            RecordUnlock(appId, achKey, displayName, percent);
             ShowPopup(displayName, iconUrl, percent);
+        }
+
+        // Saves the unlock to the history (and takes a screenshot if enabled) without slowing the popup down.
+        static void RecordUnlock(string appId, string achKey, string displayName, double? percent)
+        {
+            string gameName = "App " + appId;
+            try
+            {
+                TrackedGame? tracked = dashboard?.GetTrackedGames().FirstOrDefault(g => g.AppId == appId);
+                if (tracked != null && tracked.Name.Length > 0) gameName = tracked.Name;
+            }
+            catch { }
+
+            bool takeScreenshot = AppSettings.Current.ScreenshotOnUnlock;
+            DateTime now = DateTime.UtcNow;
+            Task.Run(() =>
+            {
+                string? screenshot = takeScreenshot ? ScreenshotService.Capture(gameName, displayName) : null;
+                UnlockHistory.Add(new UnlockEntry
+                {
+                    TimeUtc = now,
+                    AppId = appId,
+                    GameName = gameName,
+                    Key = achKey,
+                    Name = displayName,
+                    Percent = percent,
+                    Screenshot = screenshot
+                });
+            });
         }
 
         static void LoadTranslator()

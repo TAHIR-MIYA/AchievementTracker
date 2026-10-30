@@ -98,6 +98,8 @@ Open **Settings** in the app to use the **Test popup** button, switch the **Desk
 * **Rarity:** the popup and the achievement list show how rare each achievement is (for example "Rare 4.2%"), from Steam's global unlock percentages. Rare and ultra rare ones are highlighted in gold. No API key needed.
 * **Auto-fill and covers:** type a Steam App ID and the game's real name is filled in from the Steam store. A wrong App ID is flagged right away. Games show their Steam cover art in the Library (cached in `%APPDATA%\AchievementTracker\covers`).
 * **Popup settings:** choose the corner (top left, top right, bottom left, bottom right) and how long the popup stays (3, 5, 8 or 12 seconds). The OBS overlay follows the same settings.
+* **Activity:** every unlock is recorded (newest 500 are kept) and listed on the **Activity** tab with the game, time and rarity. Turn on **Screenshot on unlock** to also save a picture of your game to `Pictures\AchievementTracker\<game>\`; double-click an entry to open its screenshot. Screenshots work in Borderless or Windowed mode, in true fullscreen they can come out black.
+* **Search and filters:** in a game's achievement list, search by name or description and switch between All, Unlocked and Locked.
 
 > Note: popups can't appear over a game in *exclusive fullscreen*. Use *Borderless/Windowed* mode in the game's video settings.
 

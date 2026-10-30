@@ -17,6 +17,7 @@ namespace AchievementTracker
         public int SoundVolume { get; set; } = 50;       // 0-100, unlock sound of the desktop popup
         public string PopupPosition { get; set; } = "top-right";   // top-left, top-right, bottom-left, bottom-right
         public int PopupSeconds { get; set; } = 5;       // how long the popup stays fully visible
+        public bool ScreenshotOnUnlock { get; set; } = false;   // save a screenshot of the game when something unlocks
 
         public static AppSettings Current { get; private set; } = Load();
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -34,12 +35,19 @@ namespace AchievementTracker
         private Label titleLabel = null!;
         private Label subtitleLabel = null!;
         private FlatButton libraryTab = null!;
+        private FlatButton activityTab = null!;
         private FlatButton settingsTab = null!;
         private StatusPill statusPill = null!;
 
         // Pages
         private Panel libraryPage = null!;
         private Panel settingsPage = null!;
+        private Panel activityPage = null!;
+
+        // Activity page
+        private RowListBox activityList = null!;
+        private Label activityEmpty = null!;
+        private Label activitySummary = null!;
 
         // Library page
         private RowListBox gameList = null!;
@@ -82,7 +90,10 @@ namespace AchievementTracker
             libraryPage = BuildLibraryPage();
             settingsPage = BuildSettingsPage();
             settingsPage.Visible = false;
+            activityPage = BuildActivityPage();
+            activityPage.Visible = false;
             body.Controls.Add(libraryPage);
+            body.Controls.Add(activityPage);
             body.Controls.Add(settingsPage);
 
             BuildHeader();
@@ -95,6 +106,12 @@ namespace AchievementTracker
             UpdateStatus();
             LayoutHeader();
             foreach (TrackedGame game in games) LoadCoverInBackground(game);
+
+            RefreshActivity();
+            UnlockHistory.Changed += (s, e) =>
+            {
+                try { if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(RefreshActivity)); } catch { }
+            };
         }
 
         // ------------------------------------------------------------------ small helpers
@@ -159,9 +176,11 @@ namespace AchievementTracker
             subtitleLabel = MakeLabel("", Theme.Small, Theme.Muted, Theme.Base);
 
             libraryTab = new FlatButton { Text = "Library", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40), Active = true };
+            activityTab = new FlatButton { Text = "Activity", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40) };
             settingsTab = new FlatButton { Text = "Settings", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40) };
-            libraryTab.Click += (s, e) => ShowPage(false);
-            settingsTab.Click += (s, e) => ShowPage(true);
+            libraryTab.Click += (s, e) => ShowPage(0);
+            activityTab.Click += (s, e) => ShowPage(1);
+            settingsTab.Click += (s, e) => ShowPage(2);
 
             statusPill = new StatusPill { Backdrop = Theme.Base };
 
@@ -169,6 +188,7 @@ namespace AchievementTracker
             header.Controls.Add(titleLabel);
             header.Controls.Add(subtitleLabel);
             header.Controls.Add(libraryTab);
+            header.Controls.Add(activityTab);
             header.Controls.Add(settingsTab);
             header.Controls.Add(statusPill);
             header.Resize += (s, e) => LayoutHeader();
@@ -184,18 +204,21 @@ namespace AchievementTracker
 
             statusPill.Location = new Point(header.Width - 28 - statusPill.Width, (header.Height - statusPill.Height) / 2);
 
-            int tabsWidth = libraryTab.Width + settingsTab.Width + 8;
+            int tabsWidth = libraryTab.Width + activityTab.Width + settingsTab.Width + 16;
             int tabsX = (header.Width - tabsWidth) / 2;
             libraryTab.Location = new Point(tabsX, 18);
-            settingsTab.Location = new Point(tabsX + libraryTab.Width + 8, 18);
+            activityTab.Location = new Point(tabsX + libraryTab.Width + 8, 18);
+            settingsTab.Location = new Point(tabsX + libraryTab.Width + activityTab.Width + 16, 18);
         }
 
-        private void ShowPage(bool settings)
+        private void ShowPage(int page)   // 0 = Library, 1 = Activity, 2 = Settings
         {
-            libraryPage.Visible = !settings;
-            settingsPage.Visible = settings;
-            libraryTab.Active = !settings;
-            settingsTab.Active = settings;
+            libraryPage.Visible = page == 0;
+            activityPage.Visible = page == 1;
+            settingsPage.Visible = page == 2;
+            libraryTab.Active = page == 0;
+            activityTab.Active = page == 1;
+            settingsTab.Active = page == 2;
         }
 
         private void UpdateStatus()
@@ -596,6 +619,170 @@ namespace AchievementTracker
                     MessageBox.Show("Could not find a configuration file with an App ID next to that game.", "Detection failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
+        }
+
+        // ------------------------------------------------------------------ activity page
+
+        private Panel BuildActivityPage()
+        {
+            Panel page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Base };
+            CardPanel card = NewCard();
+
+            Label title = MakeLabel("Recent unlocks", Theme.Heading, Theme.Text, Theme.Surface);
+            activitySummary = MakeLabel("", Theme.Small, Theme.Muted, Theme.Surface);
+
+            activityList = new RowListBox { ItemHeight = 64 };
+            activityList.DrawItem += ActivityList_DrawItem;
+            activityList.DoubleClick += (s, e) => OpenSelectedScreenshot();
+
+            activityEmpty = new Label
+            {
+                Text = "Nothing here yet.\nUnlock an achievement in a tracked game and it shows up here.",
+                Font = Theme.Body,
+                ForeColor = Theme.Muted,
+                BackColor = Theme.Surface,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            Label shotLabel = MakeLabel("Screenshot on unlock", Theme.Body, Theme.Text, Theme.Surface);
+            ToggleSwitch shotToggle = new ToggleSwitch { Checked = AppSettings.Current.ScreenshotOnUnlock };
+            shotToggle.CheckedChanged += (s, e) =>
+            {
+                AppSettings.Current.ScreenshotOnUnlock = shotToggle.Checked;
+                AppSettings.Save();
+            };
+
+            FlatButton folderButton = new FlatButton { Text = "Open screenshots", Kind = ButtonKind.Secondary, Height = 34 };
+            folderButton.Click += (s, e) =>
+            {
+                try
+                {
+                    Directory.CreateDirectory(ScreenshotService.FolderPath);
+                    Process.Start(new ProcessStartInfo { FileName = ScreenshotService.FolderPath, UseShellExecute = true });
+                }
+                catch { }
+            };
+
+            FlatButton clearButton = new FlatButton { Text = "Clear", Kind = ButtonKind.DangerGhost, Height = 34 };
+            clearButton.Click += (s, e) =>
+            {
+                if (UnlockHistory.Snapshot().Count == 0) return;
+                if (MessageBox.Show("Clear the unlock history? Your screenshots are not deleted.", "Clear history",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    UnlockHistory.Clear();
+                }
+            };
+
+            card.Controls.Add(title);
+            card.Controls.Add(activitySummary);
+            card.Controls.Add(shotLabel);
+            card.Controls.Add(shotToggle);
+            card.Controls.Add(folderButton);
+            card.Controls.Add(clearButton);
+            card.Controls.Add(activityList);
+            card.Controls.Add(activityEmpty);
+            activityEmpty.BringToFront();
+
+            card.Resize += (s, e) =>
+            {
+                title.Location = new Point(20, 14);
+                activitySummary.Location = new Point(20, 40);
+
+                clearButton.SetBounds(card.Width - 20 - 72, 14, 72, 34);
+                folderButton.SetBounds(clearButton.Left - 8 - 150, 14, 150, 34);
+                shotToggle.Location = new Point(folderButton.Left - 16 - shotToggle.Width, 19);
+                shotLabel.Location = new Point(shotToggle.Left - 10 - shotLabel.Width, 20);
+
+                activityList.SetBounds(10, 66, card.Width - 20, Math.Max(10, card.Height - 76));
+                activityEmpty.SetBounds(30, 66, Math.Max(10, card.Width - 60), Math.Max(10, card.Height - 76));
+            };
+
+            page.Controls.Add(card);
+            return page;
+        }
+
+        private void RefreshActivity()
+        {
+            List<UnlockEntry> entries = UnlockHistory.Snapshot();
+
+            activityList.BeginUpdate();
+            activityList.Items.Clear();
+            foreach (UnlockEntry entry in entries) activityList.Items.Add(entry);
+            activityList.EndUpdate();
+
+            activityEmpty.Visible = entries.Count == 0;
+            int lastWeek = entries.Count(entry => entry.TimeUtc > DateTime.UtcNow.AddDays(-7));
+            activitySummary.Text = entries.Count == 0
+                ? "No unlocks recorded yet"
+                : entries.Count + (entries.Count == 1 ? " unlock" : " unlocks") + " recorded, " + lastWeek + " in the last 7 days";
+        }
+
+        private void ActivityList_DrawItem(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= activityList.Items.Count) return;
+            UnlockEntry? entry = activityList.Items[e.Index] as UnlockEntry;
+            if (entry == null) return;
+
+            Graphics g = e.Graphics;
+            bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            bool hover = activityList.HoverIndex == e.Index;
+            Rectangle r = new Rectangle(e.Bounds.X + 2, e.Bounds.Y + 3, e.Bounds.Width - 4, e.Bounds.Height - 6);
+
+            using (System.Drawing.Drawing2D.GraphicsPath path = Theme.RoundedRect(r, 12f))
+            {
+                if (selected || hover)
+                {
+                    using (SolidBrush fill = new SolidBrush(selected ? Theme.Hover : Theme.Raised)) g.FillPath(fill, path);
+                }
+                if (selected)
+                {
+                    using (Pen pen = new Pen(Theme.Accent, 1.5f)) g.DrawPath(pen, path);
+                }
+            }
+
+            Image? cover = games.FirstOrDefault(game => game.AppId == entry.AppId)?.Cover;
+            Theme.DrawCover(g, new Rectangle(r.X + 10, r.Y + (r.Height - 42) / 2, 90, 42), cover, entry.GameName, entry.AppId, 8f);
+
+            int rightWidth = 190;
+            int textWidth = Math.Max(40, r.Width - 114 - rightWidth - 16);
+            Theme.DrawText(g, entry.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 114, r.Y + 10, textWidth, 22));
+            Theme.DrawText(g, entry.GameName + ", " + TimeAgo(entry.TimeUtc), Theme.Small, Theme.Muted, new Rectangle(r.X + 114, r.Y + 32, textWidth, 18));
+
+            Rectangle rightRect = new Rectangle(r.Right - rightWidth - 14, r.Y + 10, rightWidth, 20);
+            if (entry.Percent.HasValue)
+            {
+                double percent = entry.Percent.Value;
+                Theme.DrawText(g, Rarity.Label(percent), Theme.Small, Rarity.IsHighlighted(percent) ? Theme.Accent : Theme.Muted, rightRect, TextFormatFlags.Right);
+            }
+            if (!string.IsNullOrEmpty(entry.Screenshot))
+            {
+                Theme.DrawText(g, "Screenshot saved", Theme.Small, Theme.TextDim, new Rectangle(rightRect.X, r.Y + 32, rightRect.Width, 18), TextFormatFlags.Right);
+            }
+        }
+
+        private void OpenSelectedScreenshot()
+        {
+            UnlockEntry? entry = activityList.SelectedItem as UnlockEntry;
+            if (entry == null || string.IsNullOrEmpty(entry.Screenshot)) return;
+            try
+            {
+                if (File.Exists(entry.Screenshot))
+                    Process.Start(new ProcessStartInfo { FileName = entry.Screenshot, UseShellExecute = true });
+                else
+                    MessageBox.Show("That screenshot has been moved or deleted.", "Screenshot", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch { }
+        }
+
+        private static string TimeAgo(DateTime utc)
+        {
+            TimeSpan age = DateTime.UtcNow - utc;
+            if (age.TotalMinutes < 1) return "just now";
+            if (age.TotalMinutes < 60) return (int)age.TotalMinutes + " min ago";
+            if (age.TotalHours < 24) return (int)age.TotalHours + (age.TotalHours < 2 ? " hour ago" : " hours ago");
+            if (age.TotalDays < 7) return (int)age.TotalDays + (age.TotalDays < 2 ? " day ago" : " days ago");
+            return utc.ToLocalTime().ToString("d MMM yyyy");
         }
 
         // ------------------------------------------------------------------ settings page

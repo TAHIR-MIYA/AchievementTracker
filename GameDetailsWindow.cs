@@ -30,6 +30,10 @@ namespace AchievementTracker
 
         private RowListBox achievementList = null!;
         private ProgressRing ring = null!;
+        private List<AchievementRow> allRows = new List<AchievementRow>();   // everything, before filtering
+        private ModernTextBox searchBox = null!;
+        private SegmentedControl filterPicker = null!;
+        private Label noResults = null!;
         private Label subtitleLabel = null!;
 
         public GameDetailsWindow(TrackedGame game, string apiKey)
@@ -60,6 +64,35 @@ namespace AchievementTracker
             achievementList = new RowListBox { Dock = DockStyle.Fill, ItemHeight = 84, BackColor = Theme.Base };
             achievementList.DrawItem += AchievementList_DrawItem;
             listArea.Controls.Add(achievementList);
+
+            // Search box and All / Unlocked / Locked filter above the list
+            Panel filterBar = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Theme.Base };
+            searchBox = new ModernTextBox { PlaceholderText = "Search achievements", Backdrop = Theme.Base };
+            filterPicker = new SegmentedControl { Items = new[] { "All", "Unlocked", "Locked" }, Backdrop = Theme.Base };
+            searchBox.Inner.TextChanged += (s, e) => ApplyFilter();
+            filterPicker.SelectedChanged += (s, e) => ApplyFilter();
+            filterBar.Controls.Add(searchBox);
+            filterBar.Controls.Add(filterPicker);
+            filterBar.Resize += (s, e) =>
+            {
+                int pickerWidth = 330;
+                filterPicker.SetBounds(filterBar.Width - pickerWidth, 0, pickerWidth, 38);
+                searchBox.SetBounds(0, 0, Math.Max(120, Math.Min(360, filterBar.Width - pickerWidth - 16)), 38);
+            };
+            listArea.Controls.Add(filterBar);
+
+            noResults = new Label
+            {
+                Text = "No achievements match.",
+                Font = Theme.Body,
+                ForeColor = Theme.Muted,
+                BackColor = Theme.Base,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Visible = false
+            };
+            listArea.Controls.Add(noResults);
+            noResults.BringToFront();
+            listArea.Resize += (s, e) => noResults.SetBounds(24, 16 + 54 + 20, Math.Max(10, listArea.Width - 48), 40);
 
             Panel headerPanel = new Panel { Dock = DockStyle.Top, Height = 132, BackColor = Theme.Surface };
             ring = new ProgressRing { Size = new Size(84, 84), Location = new Point(28, 24), Backdrop = Theme.Surface };
@@ -287,10 +320,14 @@ namespace AchievementTracker
                 // Unlocked first, then locked, then hidden
                 List<(AchievementRow Row, string IconUrl)> ordered = unlocked.Concat(locked).Concat(hidden).ToList();
 
-                achievementList.BeginUpdate();
-                achievementList.Items.Clear();
-                foreach (var item in ordered) achievementList.Items.Add(item.Row);
-                achievementList.EndUpdate();
+                allRows = ordered.Select(item => item.Row).ToList();
+                filterPicker.Items = new[]
+                {
+                    "All " + totalCount,
+                    "Unlocked " + unlockedCount,
+                    "Locked " + (totalCount - unlockedCount)
+                };
+                ApplyFilter();
 
                 ring.Value = totalCount == 0 ? 0f : (float)unlockedCount / totalCount;
                 subtitleLabel.Text = unlockedCount + " of " + totalCount + " achievements unlocked";
@@ -304,6 +341,31 @@ namespace AchievementTracker
             {
                 if (!IsDisposed) subtitleLabel.Text = "Couldn't reach Steam. Check your connection and API key.";
             }
+        }
+
+        private void ApplyFilter()
+        {
+            string term = searchBox.Value.Trim();
+            int mode = filterPicker.SelectedIndex;   // 0 = all, 1 = unlocked, 2 = locked
+
+            achievementList.BeginUpdate();
+            achievementList.Items.Clear();
+            foreach (AchievementRow row in allRows)
+            {
+                if (mode == 1 && !row.Unlocked) continue;
+                if (mode == 2 && row.Unlocked) continue;
+
+                if (term.Length > 0)
+                {
+                    bool descriptionHidden = row.Hidden && !row.Unlocked;   // never reveal a hidden description through search
+                    bool matches = row.Name.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   (!descriptionHidden && row.Description.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
+                    if (!matches) continue;
+                }
+                achievementList.Items.Add(row);
+            }
+            achievementList.EndUpdate();
+            noResults.Visible = allRows.Count > 0 && achievementList.Items.Count == 0;
         }
 
         private async Task LoadIconAsync(string url, AchievementRow row)
@@ -342,11 +404,11 @@ namespace AchievementTracker
         protected override void Dispose(bool disposing)
         {
             List<Image> icons = new List<Image>();
-            if (disposing && achievementList != null)
+            if (disposing)
             {
-                foreach (object item in achievementList.Items)
+                foreach (AchievementRow row in allRows)
                 {
-                    if (item is AchievementRow row && row.Icon != null)
+                    if (row.Icon != null)
                     {
                         icons.Add(row.Icon);
                         row.Icon = null;
