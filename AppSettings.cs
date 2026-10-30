@@ -18,6 +18,9 @@ namespace AchievementTracker
         public string PopupPosition { get; set; } = "top-right";   // top-left, top-right, bottom-left, bottom-right
         public int PopupSeconds { get; set; } = 5;       // how long the popup stays fully visible
         public bool ScreenshotOnUnlock { get; set; } = false;   // save a screenshot of the game when something unlocks
+        public string BackupFolder { get; set; } = "";           // where backup zips go (can be inside Google Drive, OneDrive...)
+        public bool AutoBackup { get; set; } = false;
+        public DateTime LastBackupUtc { get; set; } = DateTime.MinValue;
 
         public static AppSettings Current { get; private set; } = Load();
 

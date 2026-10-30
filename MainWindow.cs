@@ -36,6 +36,7 @@ namespace AchievementTracker
         private Label subtitleLabel = null!;
         private FlatButton libraryTab = null!;
         private FlatButton activityTab = null!;
+        private FlatButton backupTab = null!;
         private FlatButton settingsTab = null!;
         private StatusPill statusPill = null!;
 
@@ -43,6 +44,10 @@ namespace AchievementTracker
         private Panel libraryPage = null!;
         private Panel settingsPage = null!;
         private Panel activityPage = null!;
+        private Panel backupPage = null!;
+
+        // Backup page
+        private Label backupStatus = null!;
 
         // Activity page
         private RowListBox activityList = null!;
@@ -72,7 +77,7 @@ namespace AchievementTracker
         {
             Text = "Achievement Tracker";
             ClientSize = new Size(980, 620);
-            MinimumSize = new Size(900, 600);
+            MinimumSize = new Size(960, 600);
             BackColor = Theme.Base;
             ForeColor = Theme.Text;
             Font = Theme.Body;
@@ -92,8 +97,11 @@ namespace AchievementTracker
             settingsPage.Visible = false;
             activityPage = BuildActivityPage();
             activityPage.Visible = false;
+            backupPage = BuildBackupPage();
+            backupPage.Visible = false;
             body.Controls.Add(libraryPage);
             body.Controls.Add(activityPage);
+            body.Controls.Add(backupPage);
             body.Controls.Add(settingsPage);
 
             BuildHeader();
@@ -106,6 +114,13 @@ namespace AchievementTracker
             UpdateStatus();
             LayoutHeader();
             foreach (TrackedGame game in games) LoadCoverInBackground(game);
+
+            RefreshBackupStatus();
+            BackupService.Completed += (s, e) =>
+            {
+                try { if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(RefreshBackupStatus)); } catch { }
+            };
+            BackupService.StartupCheck();
 
             RefreshActivity();
             UnlockHistory.Changed += (s, e) =>
@@ -175,12 +190,14 @@ namespace AchievementTracker
             titleLabel = MakeLabel("Achievement Tracker", Theme.Title, Theme.Text, Theme.Base);
             subtitleLabel = MakeLabel("", Theme.Small, Theme.Muted, Theme.Base);
 
-            libraryTab = new FlatButton { Text = "Library", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40), Active = true };
-            activityTab = new FlatButton { Text = "Activity", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40) };
-            settingsTab = new FlatButton { Text = "Settings", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(92, 40) };
+            libraryTab = new FlatButton { Text = "Library", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(80, 40), Active = true };
+            activityTab = new FlatButton { Text = "Activity", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(80, 40) };
+            backupTab = new FlatButton { Text = "Backup", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(80, 40) };
+            settingsTab = new FlatButton { Text = "Settings", Kind = ButtonKind.Ghost, Backdrop = Theme.Base, Size = new Size(80, 40) };
             libraryTab.Click += (s, e) => ShowPage(0);
             activityTab.Click += (s, e) => ShowPage(1);
-            settingsTab.Click += (s, e) => ShowPage(2);
+            backupTab.Click += (s, e) => ShowPage(2);
+            settingsTab.Click += (s, e) => ShowPage(3);
 
             statusPill = new StatusPill { Backdrop = Theme.Base };
 
@@ -189,6 +206,7 @@ namespace AchievementTracker
             header.Controls.Add(subtitleLabel);
             header.Controls.Add(libraryTab);
             header.Controls.Add(activityTab);
+            header.Controls.Add(backupTab);
             header.Controls.Add(settingsTab);
             header.Controls.Add(statusPill);
             header.Resize += (s, e) => LayoutHeader();
@@ -204,21 +222,24 @@ namespace AchievementTracker
 
             statusPill.Location = new Point(header.Width - 28 - statusPill.Width, (header.Height - statusPill.Height) / 2);
 
-            int tabsWidth = libraryTab.Width + activityTab.Width + settingsTab.Width + 16;
-            int tabsX = (header.Width - tabsWidth) / 2;
+            int tabsWidth = libraryTab.Width + activityTab.Width + backupTab.Width + settingsTab.Width + 24;
+            int tabsX = Math.Max((header.Width - tabsWidth) / 2, titleLabel.Right + 20);
             libraryTab.Location = new Point(tabsX, 18);
-            activityTab.Location = new Point(tabsX + libraryTab.Width + 8, 18);
-            settingsTab.Location = new Point(tabsX + libraryTab.Width + activityTab.Width + 16, 18);
+            activityTab.Location = new Point(libraryTab.Right + 8, 18);
+            backupTab.Location = new Point(activityTab.Right + 8, 18);
+            settingsTab.Location = new Point(backupTab.Right + 8, 18);
         }
 
-        private void ShowPage(int page)   // 0 = Library, 1 = Activity, 2 = Settings
+        private void ShowPage(int page)   // 0 = Library, 1 = Activity, 2 = Backup, 3 = Settings
         {
             libraryPage.Visible = page == 0;
             activityPage.Visible = page == 1;
-            settingsPage.Visible = page == 2;
+            backupPage.Visible = page == 2;
+            settingsPage.Visible = page == 3;
             libraryTab.Active = page == 0;
             activityTab.Active = page == 1;
-            settingsTab.Active = page == 2;
+            backupTab.Active = page == 2;
+            settingsTab.Active = page == 3;
         }
 
         private void UpdateStatus()
@@ -783,6 +804,159 @@ namespace AchievementTracker
             if (age.TotalHours < 24) return (int)age.TotalHours + (age.TotalHours < 2 ? " hour ago" : " hours ago");
             if (age.TotalDays < 7) return (int)age.TotalDays + (age.TotalDays < 2 ? " day ago" : " days ago");
             return utc.ToLocalTime().ToString("d MMM yyyy");
+        }
+
+        // ------------------------------------------------------------------ backup page
+
+        private Panel BuildBackupPage()
+        {
+            Panel page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Base };
+            CardPanel card = NewCard();
+            AppSettings settings = AppSettings.Current;
+
+            Label title = MakeLabel("Back up your progress", Theme.Heading, Theme.Text, Theme.Surface);
+            Label intro = new Label
+            {
+                Text = "Saves a zip with your achievement files, unlock history and game list into a folder you choose. " +
+                       "Pick a folder inside Google Drive (install Google Drive for desktop), OneDrive or Dropbox, " +
+                       "and that app uploads each backup to the cloud for you. Your Steam API key is never included.",
+                Font = Theme.Body,
+                ForeColor = Theme.TextDim,
+                BackColor = Theme.Surface
+            };
+
+            Label folderCaption = MakeLabel("Backup folder", Theme.Small, Theme.Muted, Theme.Surface);
+            ModernTextBox folderBox = new ModernTextBox { PlaceholderText = "No folder chosen yet" };
+            folderBox.Inner.ReadOnly = true;
+            folderBox.Inner.BackColor = Theme.Raised;
+            folderBox.Value = settings.BackupFolder;
+
+            FlatButton chooseButton = new FlatButton { Text = "Choose folder", Kind = ButtonKind.Secondary };
+            chooseButton.Click += (s, e) =>
+            {
+                using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+                {
+                    dialog.Description = "Choose where the backups are saved";
+                    dialog.UseDescriptionForTitle = true;
+                    dialog.ShowNewFolderButton = true;
+                    if (!string.IsNullOrEmpty(AppSettings.Current.BackupFolder)) dialog.SelectedPath = AppSettings.Current.BackupFolder;
+                    if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+                    AppSettings.Current.BackupFolder = dialog.SelectedPath;
+                    AppSettings.Save();
+                    folderBox.Value = dialog.SelectedPath;
+                }
+            };
+
+            Label autoLabel = MakeLabel("Back up automatically", Theme.Body, Theme.Text, Theme.Surface);
+            Label autoHint = MakeLabel("30 seconds after you unlock something, and once a day when the app starts", Theme.Small, Theme.Muted, Theme.Surface);
+            ToggleSwitch autoToggle = new ToggleSwitch { Checked = settings.AutoBackup };
+            autoToggle.CheckedChanged += (s, e) =>
+            {
+                if (autoToggle.Checked && string.IsNullOrWhiteSpace(AppSettings.Current.BackupFolder))
+                {
+                    MessageBox.Show("Choose a backup folder first.", "Automatic backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    autoToggle.Checked = false;   // re-enters this handler
+                    return;
+                }
+                AppSettings.Current.AutoBackup = autoToggle.Checked;
+                AppSettings.Save();
+            };
+
+            FlatButton nowButton = new FlatButton { Text = "Back up now", Kind = ButtonKind.Primary };
+            nowButton.Click += async (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(AppSettings.Current.BackupFolder))
+                {
+                    MessageBox.Show("Choose a backup folder first.", "Back up now", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                nowButton.Enabled = false;
+                backupStatus.ForeColor = Theme.Muted;
+                backupStatus.Text = "Backing up...";
+                List<TrackedGame> snapshot = games.ToList();
+                await Task.Run(() => BackupService.RunNow(snapshot));
+                nowButton.Enabled = true;
+                RefreshBackupStatus();
+            };
+
+            FlatButton openButton = new FlatButton { Text = "Open backup folder", Kind = ButtonKind.Secondary };
+            openButton.Click += (s, e) =>
+            {
+                try
+                {
+                    string folder = AppSettings.Current.BackupFolder;
+                    if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+                        Process.Start(new ProcessStartInfo { FileName = folder, UseShellExecute = true });
+                }
+                catch { }
+            };
+
+            backupStatus = new Label { Font = Theme.Body, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
+            Label included = new Label
+            {
+                Text = "Included: your game list, unlock history, settings and the achievement files of your tracked games. " +
+                       "Screenshots are not included. The 10 newest backups are kept.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                BackColor = Theme.Surface
+            };
+
+            card.Controls.Add(title);
+            card.Controls.Add(intro);
+            card.Controls.Add(folderCaption);
+            card.Controls.Add(folderBox);
+            card.Controls.Add(chooseButton);
+            card.Controls.Add(autoLabel);
+            card.Controls.Add(autoHint);
+            card.Controls.Add(autoToggle);
+            card.Controls.Add(nowButton);
+            card.Controls.Add(openButton);
+            card.Controls.Add(backupStatus);
+            card.Controls.Add(included);
+
+            card.Resize += (s, e) =>
+            {
+                int w = Math.Min(card.Width - 40, 780);
+                title.Location = new Point(20, 16);
+                intro.SetBounds(20, 48, w, 70);
+
+                folderCaption.Location = new Point(20, 130);
+                folderBox.SetBounds(20, 152, w - 150 - 8, 38);
+                chooseButton.SetBounds(20 + w - 150, 152, 150, 38);
+
+                autoLabel.Location = new Point(20, 216);
+                autoHint.Location = new Point(20, 238);
+                autoToggle.Location = new Point(20 + w - autoToggle.Width, 220);
+
+                nowButton.SetBounds(20, 284, 140, 38);
+                openButton.SetBounds(168, 284, 170, 38);
+
+                backupStatus.SetBounds(20, 340, w, 24);
+                included.SetBounds(20, 376, w, 40);
+            };
+
+            page.Controls.Add(card);
+            return page;
+        }
+
+        private void RefreshBackupStatus()
+        {
+            if (BackupService.LastMessage.Length > 0)
+            {
+                backupStatus.Text = BackupService.LastMessage;
+                backupStatus.ForeColor = BackupService.LastOk ? Theme.Good : Theme.Danger;
+            }
+            else if (AppSettings.Current.LastBackupUtc.Year > 2000)
+            {
+                backupStatus.Text = "Last backup: " + AppSettings.Current.LastBackupUtc.ToLocalTime().ToString("d MMM yyyy, HH:mm");
+                backupStatus.ForeColor = Theme.Muted;
+            }
+            else
+            {
+                backupStatus.Text = "No backup made yet";
+                backupStatus.ForeColor = Theme.Muted;
+            }
         }
 
         // ------------------------------------------------------------------ settings page

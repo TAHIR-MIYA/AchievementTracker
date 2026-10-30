@@ -31,7 +31,7 @@ namespace AchievementTracker
 
         public static event EventHandler? Changed;
 
-        private static string FilePath => Path.Combine(
+        public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AchievementTracker", "unlock_history.json");
 
         private static List<UnlockEntry> Load()

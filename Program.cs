@@ -277,7 +277,36 @@ namespace AchievementTracker
                     Percent = percent,
                     Screenshot = screenshot
                 });
+                BackupService.ScheduleAfterUnlock();
             });
+        }
+
+        // The folders where emulators keep the achievement files of a game (only those that exist).
+        public static List<(string Label, string Dir)> GetAchievementFolders(string appId)
+        {
+            List<(string Label, string Dir)> folders = new List<(string Label, string Dir)>();
+            string publicDir = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
+
+            string goldberg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
+            if (Directory.Exists(goldberg)) folders.Add(("Goldberg", goldberg));
+
+            (string Label, string Sub)[] emulators =
+            {
+                ("CODEX", @"Steam\CODEX"), ("RUNE", @"Steam\RUNE"), ("FLT", @"Steam\FLT"),
+                ("TENOKE", @"Steam\TENOKE"), ("OnlineFix", "OnlineFix")
+            };
+            foreach (var emulator in emulators)
+            {
+                string dir = Path.Combine(publicDir, "Documents", emulator.Sub, appId);
+                if (Directory.Exists(dir)) folders.Add((emulator.Label, dir));
+            }
+            return folders;
+        }
+
+        public static List<TrackedGame> GetTrackedGamesSnapshot()
+        {
+            try { return dashboard?.GetTrackedGames().ToList() ?? new List<TrackedGame>(); }
+            catch { return new List<TrackedGame>(); }
         }
 
         static void LoadTranslator()
