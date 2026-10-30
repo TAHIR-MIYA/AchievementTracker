@@ -89,6 +89,8 @@ namespace AchievementTracker
                 if (!uint.TryParse(appId, out _)) continue;
                 game.AppId = appId;
 
+                try
+                {
                 // 1. WATCH GOLDBERG
                 string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
                 Directory.CreateDirectory(goldbergDir); 
@@ -117,6 +119,11 @@ namespace AchievementTracker
                         if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
                             ParseIniForChanges(appId, e.FullPath);
                     });
+                }
+                }
+                catch
+                {
+                    // One broken game entry (locked folder, no permission...) must never stop the app from starting.
                 }
             }
         }
