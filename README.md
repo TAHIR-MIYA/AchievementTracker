@@ -89,6 +89,15 @@ OBS **Game Capture** only records what the game itself draws, so a separate popu
 Open **Settings** in the app to use the **Test popup** button, switch the **Desktop popup** and **OBS browser overlay** on or off, and set the **Sound volume** of the desktop popup.
 
 * `&volume=0.3` - volume of the sound inside the browser source (0 to 1, used together with `?sound=1`).
+* `&pos=bottom-left` and `&seconds=8` - override the position and duration chosen in **Settings** (otherwise the app's settings are used, live).
+
+---
+
+## ✨ Features
+
+* **Rarity:** the popup and the achievement list show how rare each achievement is (for example "Rare 4.2%"), from Steam's global unlock percentages. Rare and ultra rare ones are highlighted in gold. No API key needed.
+* **Auto-fill and covers:** type a Steam App ID and the game's real name is filled in from the Steam store. A wrong App ID is flagged right away. Games show their Steam cover art in the Library (cached in `%APPDATA%\AchievementTracker\covers`).
+* **Popup settings:** choose the corner (top left, top right, bottom left, bottom right) and how long the popup stays (3, 5, 8 or 12 seconds). The OBS overlay follows the same settings.
 
 > Note: popups can't appear over a game in *exclusive fullscreen*. Use *Borderless/Windowed* mode in the game's video settings.
 

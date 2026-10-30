@@ -66,10 +66,11 @@ namespace AchievementTracker
             cts = null;
         }
 
-        public static void Broadcast(string name, string iconUrl)
+        public static void Broadcast(string name, string iconUrl, double? percent = null)
         {
             if (!IsRunning) return;
-            string json = JsonSerializer.Serialize(new { name, icon = iconUrl });
+            AppSettings settings = AppSettings.Current;
+            string json = JsonSerializer.Serialize(new { name, icon = iconUrl, percent, pos = settings.PopupPosition, seconds = settings.PopupSeconds });
             Send("data: " + json + "\n\n");
         }
 
@@ -184,7 +185,8 @@ namespace AchievementTracker
 
         private static string? FindAsset(string fileName) => AppPaths.FindAsset(fileName);
 
-        // URL options:  ?pos=top-right | top-left | bottom-right | bottom-left   &sound=1   &volume=0.0-1.0
+        // URL options (all optional, the app's settings are used otherwise):
+        //   ?pos=top-right | top-left | bottom-right | bottom-left    &seconds=5    &sound=1    &volume=0.0-1.0
         private const string OverlayHtml = """
 <!doctype html>
 <html>
@@ -205,13 +207,16 @@ namespace AchievementTracker
     transition: transform .45s cubic-bezier(.2,.9,.3,1);
   }
   .card img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: #2A3242; flex: none; }
-  .text { min-width: 0; }
-  .small { font-size: 12px; font-weight: 600; color: #F2B544; }
-  .name { font-size: 17px; font-weight: 600; margin-top: 2px; max-width: 300px;
+  .text { flex: 1; min-width: 0; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .small { font-size: 12px; font-weight: 600; color: #F2B544; white-space: nowrap; }
+  .rare { font-size: 12px; font-weight: 600; color: #8E97AB; white-space: nowrap; }
+  .rare.hi { color: #F2B544; }
+  .name { font-size: 17px; font-weight: 600; margin-top: 2px;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar { position: absolute; left: 18px; right: 18px; bottom: 7px; height: 3px; border-radius: 2px;
          background: #F2B544; transform-origin: left center;
-         animation: drain 4.5s linear .45s forwards; }
+         animation: drain 5s linear .45s forwards; }
   @keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 </style>
 </head>
@@ -219,13 +224,20 @@ namespace AchievementTracker
 <div id="stage"></div>
 <script>
   const q = new URLSearchParams(location.search);
-  const pos = q.get('pos') || 'top-right';
+  const urlPos = q.get('pos');
+  const urlSeconds = parseFloat(q.get('seconds'));
   const withSound = q.get('sound') === '1';
   const volume = Math.min(1, Math.max(0, parseFloat(q.get('volume') || '0.5')));
   const stage = document.getElementById('stage');
-  stage.style[pos.indexOf('left') >= 0 ? 'left' : 'right'] = '40px';
-  stage.style[pos.indexOf('bottom') >= 0 ? 'bottom' : 'top'] = '40px';
-  const hidden = pos.indexOf('bottom') >= 0 ? 'translateY(160%)' : 'translateY(-160%)';
+
+  function place(pos) {
+    stage.style.left = stage.style.right = stage.style.top = stage.style.bottom = '';
+    stage.style[pos.indexOf('left') >= 0 ? 'left' : 'right'] = '40px';
+    stage.style[pos.indexOf('bottom') >= 0 ? 'bottom' : 'top'] = '40px';
+  }
+
+  function tier(p) { return p < 5 ? 'Ultra rare' : p < 20 ? 'Rare' : p < 50 ? 'Uncommon' : 'Common'; }
+  function fmt(p) { return (p < 10 ? p.toFixed(1) : String(Math.round(p))) + '%'; }
 
   const queue = [];
   let busy = false;
@@ -237,6 +249,11 @@ namespace AchievementTracker
     if (!a) { busy = false; return; }
     busy = true;
 
+    const pos = urlPos || a.pos || 'top-right';
+    const seconds = urlSeconds > 0 ? urlSeconds : (a.seconds > 0 ? a.seconds : 5);
+    const hidden = pos.indexOf('bottom') >= 0 ? 'translateY(160%)' : 'translateY(-160%)';
+    place(pos);
+
     const card = document.createElement('div');
     card.className = 'card';
     card.style.transform = hidden;
@@ -247,17 +264,29 @@ namespace AchievementTracker
 
     const text = document.createElement('div');
     text.className = 'text';
-    const small = document.createElement('div');
+
+    const top = document.createElement('div');
+    top.className = 'top';
+    const small = document.createElement('span');
     small.className = 'small';
     small.textContent = 'Achievement unlocked';
+    top.appendChild(small);
+    if (typeof a.percent === 'number') {
+      const rare = document.createElement('span');
+      rare.className = 'rare' + (a.percent < 20 ? ' hi' : '');
+      rare.textContent = tier(a.percent) + ' ' + fmt(a.percent);
+      top.appendChild(rare);
+    }
+
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = String(a.name || '');
-    text.appendChild(small);
+    text.appendChild(top);
     text.appendChild(name);
 
     const bar = document.createElement('div');
     bar.className = 'bar';
+    bar.style.animationDuration = seconds + 's';
 
     card.appendChild(img);
     card.appendChild(text);
@@ -270,8 +299,8 @@ namespace AchievementTracker
       try { const au = new Audio('/unlock.mp3'); au.volume = volume; au.play().catch(function () {}); } catch (e) {}
     }
 
-    setTimeout(function () { card.style.transform = hidden; }, 4950);
-    setTimeout(function () { card.remove(); next(); }, 5500);
+    setTimeout(function () { card.style.transform = hidden; }, seconds * 1000 + 450);
+    setTimeout(function () { card.remove(); next(); }, seconds * 1000 + 1000);
   }
 
   const es = new EventSource('/events');      // reconnects automatically

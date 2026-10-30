@@ -17,6 +17,8 @@ namespace AchievementTracker
         
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
         static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
+        static string rarityPath = AppPaths.InBase("achievement_rarity.json");
+        static ConcurrentDictionary<string, double> achievementRarity = new ConcurrentDictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         static ConcurrentDictionary<string, bool> previousState = new ConcurrentDictionary<string, bool>();   // watchers run on several threads
 
         static NotifyIcon? trayIcon;
@@ -243,8 +245,9 @@ namespace AchievementTracker
             string lookupKey = appId + "_" + achKey;
             string displayName = achievementNames.ContainsKey(lookupKey) ? achievementNames[lookupKey] : achKey;
             string iconUrl = achievementIcons.ContainsKey(lookupKey) ? achievementIcons[lookupKey] : "";
-            
-            ShowPopup(displayName, iconUrl);
+            double? percent = achievementRarity.TryGetValue(lookupKey, out double p) ? p : (double?)null;
+
+            ShowPopup(displayName, iconUrl, percent);
         }
 
         static void LoadTranslator()
@@ -262,20 +265,95 @@ namespace AchievementTracker
                     if (!string.IsNullOrWhiteSpace(json)) achievementIcons = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
                 } catch { achievementIcons = new Dictionary<string, string>(); }
             }
+
+            if (File.Exists(rarityPath))
+            {
+                try
+                {
+                    var saved = JsonSerializer.Deserialize<Dictionary<string, double>>(File.ReadAllText(rarityPath));
+                    if (saved != null) foreach (var entry in saved) achievementRarity[entry.Key] = entry.Value;
+                }
+                catch { }
+            }
         }
 
         public static void TriggerDataDownload(List<TrackedGame> games, string apiKey)
         {
-            if (string.IsNullOrWhiteSpace(apiKey)) return;
-            Task.Run(() => DownloadAllGameData(games, apiKey));
+            List<TrackedGame> snapshot = games.ToList();   // the list can change while we download
+            Task.Run(() => DownloadAllGameData(snapshot, apiKey));
         }
 
         static async Task DownloadAllGameData(List<TrackedGame> games, string apiKey)
         {
-            foreach (var game in games) await FetchSteamData(game.AppId, apiKey);
-            
-            File.WriteAllText(dictionaryPath, JsonSerializer.Serialize(achievementNames, new JsonSerializerOptions { WriteIndented = true }));
-            File.WriteAllText(iconsPath, JsonSerializer.Serialize(achievementIcons, new JsonSerializerOptions { WriteIndented = true }));
+            bool hasKey = !string.IsNullOrWhiteSpace(apiKey);
+
+            foreach (var game in games)
+            {
+                if (hasKey) await FetchSteamData(game.AppId, apiKey);
+                await FetchRarity(game.AppId);   // public data, no key needed
+            }
+
+            try
+            {
+                if (hasKey)
+                {
+                    File.WriteAllText(dictionaryPath, JsonSerializer.Serialize(achievementNames, new JsonSerializerOptions { WriteIndented = true }));
+                    File.WriteAllText(iconsPath, JsonSerializer.Serialize(achievementIcons, new JsonSerializerOptions { WriteIndented = true }));
+                }
+                SaveRarity();
+            }
+            catch { }
+        }
+
+        // ---- RARITY: share of all Steam players who unlocked each achievement ----
+        static async Task FetchRarity(string appId)
+        {
+            try
+            {
+                string url = $"https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid={appId}";
+                using (HttpResponseMessage response = await httpClient.GetAsync(url))
+                {
+                    if (!response.IsSuccessStatusCode) return;
+                    using (JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()))
+                    {
+                        if (!doc.RootElement.TryGetProperty("achievementpercentages", out JsonElement container) ||
+                            !container.TryGetProperty("achievements", out JsonElement list)) return;
+
+                        foreach (JsonElement item in list.EnumerateArray())
+                        {
+                            string name = item.TryGetProperty("name", out JsonElement n) ? n.GetString() ?? "" : "";
+                            if (name.Length == 0 || !item.TryGetProperty("percent", out JsonElement p)) continue;
+
+                            double percent = -1;
+                            if (p.ValueKind == JsonValueKind.Number) percent = p.GetDouble();
+                            else if (p.ValueKind == JsonValueKind.String &&
+                                     double.TryParse(p.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)) percent = parsed;
+
+                            if (percent >= 0) achievementRarity[appId + "_" + name] = percent;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        static void SaveRarity()
+        {
+            File.WriteAllText(rarityPath, JsonSerializer.Serialize(achievementRarity.ToDictionary(e => e.Key, e => e.Value), new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        public static bool TryGetRarity(string appId, string achievementName, out double percent)
+        {
+            return achievementRarity.TryGetValue(appId + "_" + achievementName, out percent);
+        }
+
+        // Used by the details window: fetches the numbers once if this game isn't cached yet.
+        public static async Task EnsureRarityAsync(string appId)
+        {
+            string prefix = appId + "_";
+            if (achievementRarity.Keys.Any(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))) return;
+            await FetchRarity(appId);
+            try { SaveRarity(); } catch { }
         }
 
         static async Task FetchSteamData(string appId, string apiKey)
@@ -307,7 +385,7 @@ namespace AchievementTracker
         // ---- POPUPS ----
         // One worker thread shows popups one after another, so several unlocks at once
         // no longer pile up on top of each other (the old code started a new thread per popup).
-        static readonly BlockingCollection<(string Name, string Icon)> popupQueue = new BlockingCollection<(string Name, string Icon)>();
+        static readonly BlockingCollection<(string Name, string Icon, double? Percent)> popupQueue = new BlockingCollection<(string Name, string Icon, double? Percent)>();
 
         static void StartPopupWorker()
         {
@@ -317,7 +395,7 @@ namespace AchievementTracker
                 {
                     try
                     {
-                        using OverlayWindow window = new OverlayWindow(item.Name, item.Icon);
+                        using OverlayWindow window = new OverlayWindow(item.Name, item.Icon, item.Percent);
                         Application.Run(window);
                     }
                     catch { }
@@ -329,14 +407,14 @@ namespace AchievementTracker
             worker.Start();
         }
 
-        static void ShowPopup(string achievementName, string iconUrl)
+        static void ShowPopup(string achievementName, string iconUrl, double? percent = null)
         {
             AppSettings settings = AppSettings.Current;
-            if (settings.ObsOverlay) OverlayServer.Broadcast(achievementName, iconUrl);   // browser source (OBS)
-            if (settings.DesktopPopup) popupQueue.Add((achievementName, iconUrl));         // on-screen popup
+            if (settings.ObsOverlay) OverlayServer.Broadcast(achievementName, iconUrl, percent);   // browser source (OBS)
+            if (settings.DesktopPopup) popupQueue.Add((achievementName, iconUrl, percent));         // on-screen popup
         }
 
-        public static void ShowTestPopup() => ShowPopup("Test Achievement", "");
+        public static void ShowTestPopup() => ShowPopup("Test Achievement", "", 1.8);
 
         // Starts or stops the local OBS overlay server according to the current settings.
         public static void ApplyOverlaySettings()

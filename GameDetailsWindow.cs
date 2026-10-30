@@ -17,6 +17,7 @@ namespace AchievementTracker
         public string Description { get; set; } = "";
         public bool Unlocked { get; set; }
         public bool Hidden { get; set; }
+        public double? Percent { get; set; }   // share of all Steam players who unlocked it
         public Image? Icon { get; set; }
     }
 
@@ -148,7 +149,7 @@ namespace AchievementTracker
             }
 
             int textX = iconRect.Right + 16;
-            int statusWidth = 110;
+            int statusWidth = 130;
             int textWidth = Math.Max(40, r.Right - textX - statusWidth - 16);
 
             Color nameColor = row.Unlocked ? Theme.Text : Theme.TextDim;
@@ -158,8 +159,18 @@ namespace AchievementTracker
             TextRenderer.DrawText(g, description, Theme.Small, new Rectangle(textX, r.Y + 36, textWidth, 32), Theme.Muted,
                 TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-            Rectangle statusRect = new Rectangle(r.Right - statusWidth - 16, r.Y, statusWidth, r.Height);
+            int statusX = r.Right - statusWidth - 16;
+            Rectangle statusRect = row.Percent.HasValue
+                ? new Rectangle(statusX, r.Y + 14, statusWidth, 24)
+                : new Rectangle(statusX, r.Y, statusWidth, r.Height);
             Theme.DrawText(g, row.Unlocked ? "Unlocked" : "Locked", Theme.BodyStrong, row.Unlocked ? Theme.Accent : Theme.Muted, statusRect, TextFormatFlags.Right);
+
+            if (row.Percent.HasValue)
+            {
+                double percent = row.Percent.Value;
+                Theme.DrawText(g, Rarity.Label(percent), Theme.Small, Rarity.IsHighlighted(percent) ? Theme.Accent : Theme.Muted,
+                    new Rectangle(statusX, r.Y + 42, statusWidth, 20), TextFormatFlags.Right);
+            }
         }
 
         private async void LoadAchievementsAsync()
@@ -243,6 +254,8 @@ namespace AchievementTracker
                     return;
                 }
 
+                await Program.EnsureRarityAsync(game.AppId);
+
                 int unlockedCount = 0;
                 int totalCount = 0;
                 List<(AchievementRow Row, string IconUrl)> unlocked = new List<(AchievementRow, string)>();
@@ -263,6 +276,7 @@ namespace AchievementTracker
                     if (isUnlocked) unlockedCount++;
 
                     AchievementRow row = new AchievementRow { Name = displayName, Description = description, Unlocked = isUnlocked, Hidden = isHidden };
+                    if (Program.TryGetRarity(game.AppId, internalName, out double rarityPercent)) row.Percent = rarityPercent;
                     string targetIcon = isUnlocked ? iconUrl : iconGrayUrl;
 
                     if (isUnlocked) unlocked.Add((row, targetIcon));

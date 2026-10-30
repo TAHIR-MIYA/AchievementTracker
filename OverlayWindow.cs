@@ -37,7 +37,6 @@ namespace AchievementTracker
         private const int CornerRadius = 14;
         private const int ScreenMargin = 40;
         private const int SlideInMs = 450;
-        private const int HoldMs = 4500;
         private const int SlideOutMs = 400;
 
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -71,8 +70,10 @@ namespace AchievementTracker
             base.WndProc(ref m);
         }
 
+        private int _holdMs = 5000;                  // set from the settings when the popup opens
         private readonly string _achievementName;
         private readonly string _iconUrl;
+        private readonly double? _percent;
         private Image? _icon;
         private readonly System.Windows.Forms.Timer _animTimer = new System.Windows.Forms.Timer { Interval = 15 };
         private readonly Stopwatch _clock = new Stopwatch();
@@ -80,10 +81,11 @@ namespace AchievementTracker
         private int _shownTop;
         private int _hiddenTop;
 
-        public OverlayWindow(string achievementName, string iconUrl)
+        public OverlayWindow(string achievementName, string iconUrl, double? percent = null)
         {
             _achievementName = achievementName;
             _iconUrl = iconUrl;
+            _percent = percent;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
             this.Text = "AchievementTracker Overlay"; // stable title so capture tools can find it
@@ -149,9 +151,14 @@ namespace AchievementTracker
         private void OverlayWindow_Load(object? sender, EventArgs e)
         {
             Rectangle area = GetTargetScreen().WorkingArea;
-            _left = area.Right - this.Width - ScreenMargin;      // top-right corner of that monitor
-            _shownTop = area.Top + ScreenMargin;
-            _hiddenTop = area.Top - this.Height;                 // fully above the screen edge
+            string position = AppSettings.Current.PopupPosition;
+            bool onLeft = position.Contains("left");
+            bool onBottom = position.Contains("bottom");
+
+            _holdMs = Math.Max(2, AppSettings.Current.PopupSeconds) * 1000;
+            _left = onLeft ? area.Left + ScreenMargin : area.Right - this.Width - ScreenMargin;
+            _shownTop = onBottom ? area.Bottom - this.Height - ScreenMargin : area.Top + ScreenMargin;
+            _hiddenTop = onBottom ? area.Bottom : area.Top - this.Height;   // slides in from the screen edge
             this.Location = new Point(_left, _hiddenTop);
 
             // Force native topmost override (without activating, so the game keeps focus)
@@ -175,10 +182,10 @@ namespace AchievementTracker
 
             if (t < SlideInMs)
                 top = _hiddenTop + (_shownTop - _hiddenTop) * EaseOutCubic((double)t / SlideInMs);
-            else if (t < SlideInMs + HoldMs)
+            else if (t < SlideInMs + _holdMs)
                 top = _shownTop;
-            else if (t < SlideInMs + HoldMs + SlideOutMs)
-                top = _shownTop + (_hiddenTop - _shownTop) * EaseInCubic((double)(t - SlideInMs - HoldMs) / SlideOutMs);
+            else if (t < SlideInMs + _holdMs + SlideOutMs)
+                top = _shownTop + (_hiddenTop - _shownTop) * EaseInCubic((double)(t - SlideInMs - _holdMs) / SlideOutMs);
             else
             {
                 _animTimer.Stop();
@@ -247,12 +254,17 @@ namespace AchievementTracker
             }
 
             // Text
-            Theme.DrawText(g, "Achievement unlocked", Theme.Small, Theme.Accent, new Rectangle(84, 16, Width - 84 - 16, 18));
+            Theme.DrawText(g, "Achievement unlocked", Theme.Small, Theme.Accent, new Rectangle(84, 16, 150, 18));
+            if (_percent.HasValue)
+            {
+                Color rarityColor = Rarity.IsHighlighted(_percent.Value) ? Theme.Accent : Theme.Muted;
+                Theme.DrawText(g, Rarity.Label(_percent.Value), Theme.Small, rarityColor, new Rectangle(236, 16, Width - 236 - 16, 18), TextFormatFlags.Right);
+            }
             Theme.DrawText(g, _achievementName, Theme.Heading, Theme.Text, new Rectangle(84, 34, Width - 84 - 16, 28));
 
             // Time bar: drains while the popup is on screen
             long t = _clock.ElapsedMilliseconds;
-            double remaining = 1.0 - Math.Max(0.0, Math.Min(1.0, (double)(t - SlideInMs) / HoldMs));
+            double remaining = 1.0 - Math.Max(0.0, Math.Min(1.0, (double)(t - SlideInMs) / _holdMs));
             int barWidth = (int)((Width - 40) * remaining);
             if (barWidth > 1)
             {

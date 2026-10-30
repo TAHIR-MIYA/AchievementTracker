@@ -93,24 +93,59 @@ namespace AchievementTracker
             ColorTranslator.FromHtml("#B0805B"), ColorTranslator.FromHtml("#8A9A4E"), ColorTranslator.FromHtml("#B0607A")
         };
 
-        public static void DrawAvatar(Graphics g, Rectangle r, string name, string seed)
+        public static void DrawAvatar(Graphics g, Rectangle r, string name, string seed, float radius = -1f)
         {
             int sum = 0;
             foreach (char c in seed ?? "") sum += c;
             Color baseColor = AvatarColors[sum % AvatarColors.Length];
 
-            using (GraphicsPath path = RoundedRect(r, r.Width * 0.25f))
+            using (GraphicsPath path = RoundedRect(r, radius >= 0f ? radius : r.Width * 0.25f))
             using (LinearGradientBrush fill = new LinearGradientBrush(r, Blend(baseColor, Color.White, 0.12f), Blend(baseColor, Color.Black, 0.25f), 90f))
             {
                 g.FillPath(fill, path);
             }
 
             string letter = string.IsNullOrWhiteSpace(name) ? "?" : name.Trim().Substring(0, 1).ToUpperInvariant();
-            using (Font f = new Font(HeadFamily, r.Width * 0.42f, FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font f = new Font(HeadFamily, Math.Min(r.Width, r.Height) * 0.42f, FontStyle.Regular, GraphicsUnit.Pixel))
             {
                 TextRenderer.DrawText(g, letter, f, r, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
+        }
+
+        // Cover art cropped to fill a rounded rectangle (like CSS "object-fit: cover"); letter tile if there is no image.
+        public static void DrawCover(Graphics g, Rectangle r, Image? cover, string name, string seed, float radius)
+        {
+            bool drawn = false;
+            if (cover != null)
+            {
+                GraphicsState state = g.Save();
+                try
+                {
+                    using (GraphicsPath path = RoundedRect(r, radius))
+                    {
+                        g.SetClip(path);
+                        float targetAspect = (float)r.Width / r.Height;
+                        float sourceAspect = (float)cover.Width / cover.Height;
+                        RectangleF src;
+                        if (sourceAspect > targetAspect)
+                        {
+                            float w = cover.Height * targetAspect;
+                            src = new RectangleF((cover.Width - w) / 2f, 0, w, cover.Height);
+                        }
+                        else
+                        {
+                            float h = cover.Width / targetAspect;
+                            src = new RectangleF(0, (cover.Height - h) / 2f, cover.Width, h);
+                        }
+                        g.DrawImage(cover, r, src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel);
+                        drawn = true;
+                    }
+                }
+                catch { }
+                finally { g.Restore(state); }
+            }
+            if (!drawn) DrawAvatar(g, r, name, seed, radius);
         }
 
         // ---- Window chrome (dark title bar that matches the app) ----
@@ -587,6 +622,122 @@ namespace AchievementTracker
         }
     }
 
+    /// <summary>A row of mutually exclusive options; the selected one is filled gold.</summary>
+    public class SegmentedControl : Control
+    {
+        private string[] _items = new string[0];
+        private int _selected;
+        private int _hover = -1;
+
+        public event EventHandler? SelectedChanged;
+        public Color Backdrop { get; set; } = Theme.Surface;
+
+        public string[] Items
+        {
+            get => _items;
+            set { _items = value ?? new string[0]; Invalidate(); }
+        }
+
+        public int SelectedIndex
+        {
+            get => _selected;
+            set
+            {
+                if (_items.Length > 0) value = Math.Max(0, Math.Min(_items.Length - 1, value));
+                if (_selected == value) return;
+                _selected = value;
+                Invalidate();
+                SelectedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public SegmentedControl()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            Height = 38;
+            Cursor = Cursors.Hand;
+            TabStop = true;
+        }
+
+        private int IndexAt(int x)
+        {
+            if (_items.Length == 0) return -1;
+            int index = (int)(x * _items.Length / (double)Math.Max(1, Width));
+            return Math.Max(0, Math.Min(_items.Length - 1, index));
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            int index = IndexAt(e.X);
+            if (index != _hover) { _hover = index; Invalidate(); }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            _hover = -1;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && _items.Length > 0) SelectedIndex = IndexAt(e.X);
+            base.OnMouseDown(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            return keyData == Keys.Left || keyData == Keys.Right || base.IsInputKey(keyData);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Left) { SelectedIndex = _selected - 1; e.Handled = true; }
+            else if (e.KeyCode == Keys.Right) { SelectedIndex = _selected + 1; e.Handled = true; }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Backdrop);
+            Theme.Smooth(g);
+
+            using (GraphicsPath outer = Theme.RoundedRect(new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), 10f))
+            using (SolidBrush fill = new SolidBrush(Theme.Raised))
+            using (Pen pen = new Pen(Focused && ShowFocusCues ? Theme.Accent : Theme.Border, Focused && ShowFocusCues ? 1.5f : 1f))
+            {
+                g.FillPath(fill, outer);
+                g.DrawPath(pen, outer);
+            }
+
+            if (_items.Length == 0) return;
+            float segmentWidth = (Width - 6f) / _items.Length;
+            for (int i = 0; i < _items.Length; i++)
+            {
+                RectangleF seg = new RectangleF(3f + segmentWidth * i, 3f, segmentWidth, Height - 6f);
+                bool selected = i == _selected;
+
+                if (selected || i == _hover)
+                {
+                    using (GraphicsPath path = Theme.RoundedRect(seg, 8f))
+                    using (SolidBrush brush = new SolidBrush(selected ? Theme.Accent : Theme.Hover))
+                    {
+                        g.FillPath(brush, path);
+                    }
+                }
+
+                Rectangle textRect = new Rectangle((int)seg.X, (int)seg.Y, (int)seg.Width, (int)seg.Height);
+                TextRenderer.DrawText(g, _items[i], Theme.BodyStrong, textRect, selected ? Theme.OnAccent : Theme.TextDim,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            }
+        }
+    }
+
     /// <summary>Small rounded status badge with a coloured dot.</summary>
     public class StatusPill : Control
     {
@@ -685,6 +836,7 @@ namespace AchievementTracker
     {
         public string GameName { get; set; } = "";
         public string Seed { get; set; } = "";
+        public Image? Cover { get; set; }
         public Color Backdrop { get; set; } = Theme.Surface;
 
         public AvatarBox()
@@ -697,7 +849,7 @@ namespace AchievementTracker
         {
             e.Graphics.Clear(Backdrop);
             Theme.Smooth(e.Graphics);
-            Theme.DrawAvatar(e.Graphics, new Rectangle(0, 0, Width, Height), GameName, Seed);
+            Theme.DrawCover(e.Graphics, new Rectangle(0, 0, Width, Height), Cover, GameName, Seed, 10f);
         }
     }
 

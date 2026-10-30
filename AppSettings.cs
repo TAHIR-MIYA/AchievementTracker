@@ -15,6 +15,8 @@ namespace AchievementTracker
         public bool ObsOverlay { get; set; } = true;     // local web page for an OBS Browser Source
         public int ObsPort { get; set; } = 5757;
         public int SoundVolume { get; set; } = 50;       // 0-100, unlock sound of the desktop popup
+        public string PopupPosition { get; set; } = "top-right";   // top-left, top-right, bottom-left, bottom-right
+        public int PopupSeconds { get; set; } = 5;       // how long the popup stays fully visible
 
         public static AppSettings Current { get; private set; } = Load();
 
@@ -46,6 +48,9 @@ namespace AchievementTracker
 
             if (settings.ObsPort < 1024 || settings.ObsPort > 65535) settings.ObsPort = 5757;
             settings.SoundVolume = Math.Max(0, Math.Min(100, settings.SoundVolume));
+            settings.PopupSeconds = Math.Max(2, Math.Min(20, settings.PopupSeconds));
+            string[] validPositions = { "top-left", "top-right", "bottom-left", "bottom-right" };
+            if (Array.IndexOf(validPositions, settings.PopupPosition) < 0) settings.PopupPosition = "top-right";
             return settings;
         }
 

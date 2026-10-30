@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
@@ -13,6 +14,10 @@ namespace AchievementTracker
     {
         public string Name { get; set; } = "";
         public string AppId { get; set; } = "";
+
+        // Loaded at runtime from Steam, never saved to tracked_games.json
+        [JsonIgnore]
+        public Image? Cover { get; set; }
 
         public override string ToString() => Name;
     }
@@ -41,6 +46,10 @@ namespace AchievementTracker
         private Label emptyLabel = null!;
         private ModernTextBox nameInput = null!;
         private ModernTextBox appIdInput = null!;
+        private Label lookupHint = null!;
+        private readonly System.Windows.Forms.Timer lookupTimer = new System.Windows.Forms.Timer { Interval = 650 };
+        private int lookupVersion;
+        private string lastAutoName = "";
         private Label detailHint = null!;
         private AvatarBox detailAvatar = null!;
         private Label detailName = null!;
@@ -85,6 +94,7 @@ namespace AchievementTracker
             RefreshGameListUI();
             UpdateStatus();
             LayoutHeader();
+            foreach (TrackedGame game in games) LoadCoverInBackground(game);
         }
 
         // ------------------------------------------------------------------ small helpers
@@ -240,7 +250,7 @@ namespace AchievementTracker
             // ---- Right column: add card + selected-game card
             TableLayoutPanel right = NewTable(1, 3);
             right.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 186));
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 200));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
             right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -261,10 +271,28 @@ namespace AchievementTracker
             Label nameCaption = MakeLabel("Game name", Theme.Small, Theme.Muted, Theme.Surface);
             Label idCaption = MakeLabel("Steam App ID", Theme.Small, Theme.Muted, Theme.Surface);
 
-            nameInput = new ModernTextBox { PlaceholderText = "e.g. Hollow Knight" };
+            nameInput = new ModernTextBox { PlaceholderText = "Filled in from the App ID" };
             appIdInput = new ModernTextBox { PlaceholderText = "367520" };
             nameInput.Submitted += (s, e) => appIdInput.Inner.Focus();
             appIdInput.Submitted += (s, e) => AddGame();
+
+            lookupHint = new Label { Font = Theme.Small, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
+
+            // Type an App ID, pause, and the game's real name is fetched from Steam.
+            appIdInput.Inner.TextChanged += (s, e) =>
+            {
+                lookupTimer.Stop();
+                lookupVersion++;
+                string id = appIdInput.Value.Trim();
+                if (id.Length < 3 || !id.All(char.IsDigit)) { SetLookupHint("", Theme.Muted); return; }
+                SetLookupHint("Checking Steam...", Theme.Muted);
+                lookupTimer.Start();
+            };
+            lookupTimer.Tick += async (s, e) =>
+            {
+                lookupTimer.Stop();
+                await RunLookupAsync();
+            };
 
             FlatButton addButton = new FlatButton { Text = "Add game", Kind = ButtonKind.Primary };
             addButton.Click += (s, e) => AddGame();
@@ -277,6 +305,7 @@ namespace AchievementTracker
             card.Controls.Add(idCaption);
             card.Controls.Add(nameInput);
             card.Controls.Add(appIdInput);
+            card.Controls.Add(lookupHint);
             card.Controls.Add(addButton);
             card.Controls.Add(detectButton);
 
@@ -289,10 +318,69 @@ namespace AchievementTracker
                 idCaption.Location = new Point(20 + w - idW, 48);
                 nameInput.SetBounds(20, 70, w - idW - 12, 38);
                 appIdInput.SetBounds(20 + w - idW, 70, idW, 38);
-                addButton.SetBounds(20, 126, 112, 38);
-                detectButton.SetBounds(140, 126, 152, 38);
+                lookupHint.SetBounds(20, 114, w, 18);
+                addButton.SetBounds(20, 142, 112, 38);
+                detectButton.SetBounds(140, 142, 152, 38);
             };
             return card;
+        }
+
+        private void SetLookupHint(string text, Color color)
+        {
+            lookupHint.Text = text;
+            lookupHint.ForeColor = color;
+        }
+
+        private async Task RunLookupAsync()
+        {
+            string id = appIdInput.Value.Trim();
+            int version = ++lookupVersion;
+            LookupResult result = await SteamStore.LookupAsync(id);
+            if (version != lookupVersion || IsDisposed) return;   // the user kept typing: ignore this answer
+
+            if (result.Status == LookupStatus.Found)
+            {
+                SetLookupHint("Found on Steam: " + result.Name, Theme.Good);
+                string current = nameInput.Value.Trim();
+                if (current.Length == 0 || current == lastAutoName)
+                {
+                    nameInput.Value = result.Name;
+                    lastAutoName = result.Name;
+                }
+            }
+            else if (result.Status == LookupStatus.NotFound)
+            {
+                SetLookupHint("Steam doesn't know this App ID. Check the number.", Theme.Danger);
+            }
+            else
+            {
+                SetLookupHint("Couldn't reach Steam to check this App ID.", Theme.Muted);
+            }
+        }
+
+        // Downloads (or loads from the disk cache) the cover art and repaints when it arrives.
+        private void LoadCoverInBackground(TrackedGame game)
+        {
+            if (game.Cover != null) return;
+            Task.Run(async () =>
+            {
+                Image? image = await SteamStore.GetCoverAsync(game.AppId);
+                if (image == null) return;
+                if (IsDisposed) { image.Dispose(); return; }
+                game.Cover = image;
+                try
+                {
+                    if (IsHandleCreated)
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            gameList.Invalidate();
+                            if (SelectedGame == game) UpdateDetail();
+                        }));
+                    }
+                }
+                catch { }
+            });
         }
 
         private CardPanel BuildDetailCard()
@@ -306,7 +394,7 @@ namespace AchievementTracker
                 ForeColor = Theme.Muted,
                 BackColor = Theme.Surface
             };
-            detailAvatar = new AvatarBox { Size = new Size(56, 56), Backdrop = Theme.Surface };
+            detailAvatar = new AvatarBox { Size = new Size(124, 58), Backdrop = Theme.Surface };
             detailName = new Label { Font = Theme.Heading, ForeColor = Theme.Text, BackColor = Theme.Surface, AutoEllipsis = true };
             detailId = new Label { Font = Theme.Small, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
 
@@ -328,10 +416,10 @@ namespace AchievementTracker
                 int w = card.Width - 40;
                 detailHint.SetBounds(20, 20, w, 80);
                 detailAvatar.Location = new Point(20, 20);
-                detailName.SetBounds(90, 24, Math.Max(10, w - 70), 24);
-                detailId.SetBounds(90, 50, Math.Max(10, w - 70), 20);
-                viewButton.SetBounds(20, 98, w, 38);
-                removeButton.SetBounds(20, 144, w, 38);
+                detailName.SetBounds(160, 24, Math.Max(10, w - 140), 24);
+                detailId.SetBounds(160, 50, Math.Max(10, w - 140), 20);
+                viewButton.SetBounds(20, 100, w, 38);
+                removeButton.SetBounds(20, 146, w, 38);
             };
             return card;
         }
@@ -355,6 +443,7 @@ namespace AchievementTracker
                 detailId.Text = "App ID " + game.AppId;
                 detailAvatar.GameName = game.Name;
                 detailAvatar.Seed = game.AppId;
+                detailAvatar.Cover = game.Cover;
                 detailAvatar.Invalidate();
             }
         }
@@ -382,9 +471,9 @@ namespace AchievementTracker
                 }
             }
 
-            Theme.DrawAvatar(g, new Rectangle(r.X + 12, r.Y + (r.Height - 40) / 2, 40, 40), game.Name, game.AppId);
-            Theme.DrawText(g, game.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 64, r.Y + 10, r.Width - 76, 22));
-            Theme.DrawText(g, "App ID " + game.AppId, Theme.Small, Theme.Muted, new Rectangle(r.X + 64, r.Y + 32, r.Width - 76, 18));
+            Theme.DrawCover(g, new Rectangle(r.X + 10, r.Y + (r.Height - 42) / 2, 90, 42), game.Cover, game.Name, game.AppId, 8f);
+            Theme.DrawText(g, game.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 114, r.Y + 10, r.Width - 126, 22));
+            Theme.DrawText(g, "App ID " + game.AppId, Theme.Small, Theme.Muted, new Rectangle(r.X + 114, r.Y + 32, r.Width - 126, 18));
         }
 
         private void RefreshGameListUI(string? selectAppId = null)
@@ -448,9 +537,13 @@ namespace AchievementTracker
                 return;
             }
 
-            games.Add(new TrackedGame { Name = name, AppId = id });
+            TrackedGame newGame = new TrackedGame { Name = name, AppId = id };
+            games.Add(newGame);
             SaveGames();
             RefreshGameListUI(id);
+            LoadCoverInBackground(newGame);
+            lastAutoName = "";
+            SetLookupHint("", Theme.Muted);
             nameInput.Value = "";
             appIdInput.Value = "";
             Program.UpdateWatchers(games);
@@ -493,6 +586,7 @@ namespace AchievementTracker
                 if (!string.IsNullOrEmpty(detectedAppId))
                 {
                     nameInput.Value = potentialName;
+                    lastAutoName = potentialName;   // a guess: the real name from Steam may replace it
                     appIdInput.Value = detectedAppId;
                     FlashText(button, "App ID found");
                     nameInput.Inner.Focus();
@@ -564,6 +658,29 @@ namespace AchievementTracker
                 UpdateStatus();
             };
 
+            // Where the popup appears (also used by the OBS overlay)
+            string[] positionValues = { "top-left", "top-right", "bottom-left", "bottom-right" };
+            Label positionLabel = MakeLabel("Position", Theme.Body, Theme.Text, Theme.Surface);
+            SegmentedControl positionPicker = new SegmentedControl { Items = new[] { "Top left", "Top right", "Bottom left", "Bottom right" } };
+            positionPicker.SelectedIndex = Math.Max(0, Array.IndexOf(positionValues, settings.PopupPosition));
+            positionPicker.SelectedChanged += (s, e) =>
+            {
+                AppSettings.Current.PopupPosition = positionValues[positionPicker.SelectedIndex];
+                AppSettings.Save();
+            };
+
+            // How long it stays on screen
+            int[] durationValues = { 3, 5, 8, 12 };
+            Label durationLabel = MakeLabel("Stays on screen", Theme.Body, Theme.Text, Theme.Surface);
+            SegmentedControl durationPicker = new SegmentedControl { Items = new[] { "3 seconds", "5 seconds", "8 seconds", "12 seconds" } };
+            int durationIndex = Array.IndexOf(durationValues, settings.PopupSeconds);
+            durationPicker.SelectedIndex = durationIndex >= 0 ? durationIndex : 1;
+            durationPicker.SelectedChanged += (s, e) =>
+            {
+                AppSettings.Current.PopupSeconds = durationValues[durationPicker.SelectedIndex];
+                AppSettings.Save();
+            };
+
             Label volLabel = MakeLabel("Sound volume", Theme.Body, Theme.Text, Theme.Surface);
             Label volValue = new Label
             {
@@ -598,6 +715,10 @@ namespace AchievementTracker
             card.Controls.Add(obsLabel);
             card.Controls.Add(obsHint);
             card.Controls.Add(obsToggle);
+            card.Controls.Add(positionLabel);
+            card.Controls.Add(positionPicker);
+            card.Controls.Add(durationLabel);
+            card.Controls.Add(durationPicker);
             card.Controls.Add(volLabel);
             card.Controls.Add(volValue);
             card.Controls.Add(volumeSlider);
@@ -617,12 +738,18 @@ namespace AchievementTracker
                 obsHint.Location = new Point(20, 130);
                 obsToggle.Location = new Point(card.Width - 20 - obsToggle.Width, 112);
 
-                volLabel.Location = new Point(20, 166);
-                volValue.SetBounds(card.Width - 20 - 60, 166, 60, 22);
-                volumeSlider.SetBounds(20, 192, w, 28);
+                positionLabel.Location = new Point(20, 168);
+                positionPicker.SetBounds(20, 192, w, 38);
 
-                testButton.SetBounds(20, 244, 120, 38);
-                copyButton.SetBounds(148, 244, 140, 38);
+                durationLabel.Location = new Point(20, 244);
+                durationPicker.SetBounds(20, 268, w, 38);
+
+                volLabel.Location = new Point(20, 322);
+                volValue.SetBounds(card.Width - 20 - 60, 322, 60, 22);
+                volumeSlider.SetBounds(20, 348, w, 28);
+
+                testButton.SetBounds(20, 396, 120, 38);
+                copyButton.SetBounds(148, 396, 140, 38);
             };
             return card;
         }
