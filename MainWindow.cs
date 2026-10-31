@@ -20,6 +20,12 @@ namespace AchievementTracker
         [JsonIgnore]
         public Image? Cover { get; set; }
 
+        // Save folders you added by hand (the community database is used on top of these)
+        public List<string> SavePaths { get; set; } = new List<string>();
+
+        // Where the game is installed, when known (from "Detect from .exe")
+        public string InstallDir { get; set; } = "";
+
         public override string ToString() => Name;
     }
 
@@ -69,6 +75,12 @@ namespace AchievementTracker
         private Label detailId = null!;
         private FlatButton viewButton = null!;
         private FlatButton removeButton = null!;
+        private Label savesCaption = null!;
+        private Label savesStatus = null!;
+        private FlatButton findSavesButton = null!;
+        private FlatButton addFolderButton = null!;
+        private FlatButton clearFoldersButton = null!;
+        private string pendingInstallDir = "";
 
         // Settings page
         private ModernTextBox apiInput = null!;
@@ -77,7 +89,7 @@ namespace AchievementTracker
         {
             Text = "Achievement Tracker";
             ClientSize = new Size(980, 620);
-            MinimumSize = new Size(960, 600);
+            MinimumSize = new Size(960, 660);
             BackColor = Theme.Base;
             ForeColor = Theme.Text;
             Font = Theme.Body;
@@ -442,11 +454,30 @@ namespace AchievementTracker
             detailName = new Label { Font = Theme.Heading, ForeColor = Theme.Text, BackColor = Theme.Surface, AutoEllipsis = true };
             detailId = new Label { Font = Theme.Small, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
 
-            viewButton = new FlatButton { Text = "View achievements", Kind = ButtonKind.Primary };
+            viewButton = new FlatButton { Text = "View achievements", Kind = ButtonKind.Primary, Height = 36 };
             viewButton.Click += (s, e) => OpenDetails();
 
-            removeButton = new FlatButton { Text = "Remove from tracker", Kind = ButtonKind.DangerGhost };
+            removeButton = new FlatButton { Text = "Remove from tracker", Kind = ButtonKind.DangerGhost, Height = 36 };
             removeButton.Click += (s, e) => RemoveSelected();
+
+            savesCaption = MakeLabel("Game saves", Theme.Small, Theme.Muted, Theme.Surface);
+            savesStatus = new Label { Font = Theme.Small, ForeColor = Theme.TextDim, BackColor = Theme.Surface, AutoEllipsis = true };
+
+            findSavesButton = new FlatButton { Text = "Find saves", Kind = ButtonKind.Secondary, Height = 34 };
+            findSavesButton.Click += async (s, e) => await FindSavesAsync();
+
+            addFolderButton = new FlatButton { Text = "Add folder", Kind = ButtonKind.Secondary, Height = 34 };
+            addFolderButton.Click += (s, e) => AddSaveFolder();
+
+            clearFoldersButton = new FlatButton { Text = "Clear", Kind = ButtonKind.DangerGhost, Height = 34 };
+            clearFoldersButton.Click += (s, e) =>
+            {
+                TrackedGame? game = SelectedGame;
+                if (game == null || game.SavePaths.Count == 0) return;
+                game.SavePaths.Clear();
+                SaveGames();
+                UpdateDetail();
+            };
 
             card.Controls.Add(detailHint);
             card.Controls.Add(detailAvatar);
@@ -454,6 +485,11 @@ namespace AchievementTracker
             card.Controls.Add(detailId);
             card.Controls.Add(viewButton);
             card.Controls.Add(removeButton);
+            card.Controls.Add(savesCaption);
+            card.Controls.Add(savesStatus);
+            card.Controls.Add(findSavesButton);
+            card.Controls.Add(addFolderButton);
+            card.Controls.Add(clearFoldersButton);
 
             card.Resize += (s, e) =>
             {
@@ -462,10 +498,102 @@ namespace AchievementTracker
                 detailAvatar.Location = new Point(20, 20);
                 detailName.SetBounds(160, 24, Math.Max(10, w - 140), 24);
                 detailId.SetBounds(160, 50, Math.Max(10, w - 140), 20);
-                viewButton.SetBounds(20, 100, w, 38);
-                removeButton.SetBounds(20, 146, w, 38);
+                viewButton.SetBounds(20, 92, w, 36);
+                removeButton.SetBounds(20, 134, w, 36);
+                savesCaption.Location = new Point(20, 186);
+                savesStatus.SetBounds(20, 206, w, 32);
+                findSavesButton.SetBounds(20, 244, 104, 34);
+                addFolderButton.SetBounds(132, 244, 104, 34);
+                clearFoldersButton.SetBounds(244, 244, 64, 34);
             };
             return card;
+        }
+
+        // ---- game saves (per game)
+
+        private async Task FindSavesAsync()
+        {
+            TrackedGame? game = SelectedGame;
+            if (game == null) return;
+
+            findSavesButton.Enabled = false;
+            savesStatus.ForeColor = Theme.Muted;
+            savesStatus.Text = SaveLocator.Get(game.AppId) == null
+                ? "Looking it up. The first time this downloads an 18 MB database..."
+                : "Looking it up...";
+
+            bool ok = await SaveLocator.ResolveAsync(new[] { game.AppId });
+            findSavesButton.Enabled = true;
+            if (IsDisposed) return;
+
+            if (!ok)
+            {
+                savesStatus.Text = "Couldn't reach the save database. Check your connection.";
+                return;
+            }
+            if (SelectedGame == game) UpdateDetail();
+        }
+
+        private void AddSaveFolder()
+        {
+            TrackedGame? game = SelectedGame;
+            if (game == null) return;
+
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Choose the folder where " + game.Name + " keeps its save files";
+                dialog.UseDescriptionForTitle = true;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+                if (!game.SavePaths.Contains(dialog.SelectedPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    game.SavePaths.Add(dialog.SelectedPath);
+                    SaveGames();
+                }
+            }
+            UpdateDetail();
+        }
+
+        private void UpdateSavesStatus(TrackedGame game)
+        {
+            List<string> found = SaveLocator.ExistingPaths(game);
+            SaveInfo? info = SaveLocator.Get(game.AppId);
+
+            if (found.Count > 0)
+            {
+                savesStatus.Text = (found.Count == 1 ? "1 save location found: " : found.Count + " save locations found: ") + found[0];
+                savesStatus.ForeColor = Theme.TextDim;
+            }
+            else if (info == null)
+            {
+                savesStatus.Text = "Not looked up yet. Press Find saves.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            else if (info.Patterns.Count == 0)
+            {
+                savesStatus.Text = "No known save location for this game. Use Add folder.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            else
+            {
+                savesStatus.Text = "Known location isn't on this PC yet. Play the game once, or use Add folder.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            clearFoldersButton.Visible = game.SavePaths.Count > 0;
+        }
+
+        // Where the game is installed: the folder inside ...\steamapps\common if there is one, else the exe's folder.
+        private static string GuessInstallDir(string exePath)
+        {
+            const string marker = "\\steamapps\\common\\";
+            int i = exePath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (i >= 0)
+            {
+                string rest = exePath.Substring(i + marker.Length);
+                int slash = rest.IndexOf('\\');
+                if (slash > 0) return exePath.Substring(0, i + marker.Length + slash);
+            }
+            return Path.GetDirectoryName(exePath) ?? "";
         }
 
         private TrackedGame? SelectedGame => gameList.SelectedItem as TrackedGame;
@@ -480,6 +608,11 @@ namespace AchievementTracker
             detailId.Visible = has;
             viewButton.Visible = has;
             removeButton.Visible = has;
+            savesCaption.Visible = has;
+            savesStatus.Visible = has;
+            findSavesButton.Visible = has;
+            addFolderButton.Visible = has;
+            if (!has) clearFoldersButton.Visible = false;
 
             if (game != null)
             {
@@ -489,6 +622,7 @@ namespace AchievementTracker
                 detailAvatar.Seed = game.AppId;
                 detailAvatar.Cover = game.Cover;
                 detailAvatar.Invalidate();
+                UpdateSavesStatus(game);
             }
         }
 
@@ -581,7 +715,8 @@ namespace AchievementTracker
                 return;
             }
 
-            TrackedGame newGame = new TrackedGame { Name = name, AppId = id };
+            TrackedGame newGame = new TrackedGame { Name = name, AppId = id, InstallDir = pendingInstallDir };
+            pendingInstallDir = "";
             games.Add(newGame);
             SaveGames();
             RefreshGameListUI(id);
@@ -629,6 +764,7 @@ namespace AchievementTracker
 
                 if (!string.IsNullOrEmpty(detectedAppId))
                 {
+                    pendingInstallDir = GuessInstallDir(ofd.FileName);
                     nameInput.Value = potentialName;
                     lastAutoName = potentialName;   // a guess: the real name from Steam may replace it
                     appIdInput.Value = detectedAppId;
@@ -817,7 +953,7 @@ namespace AchievementTracker
             Label title = MakeLabel("Back up your progress", Theme.Heading, Theme.Text, Theme.Surface);
             Label intro = new Label
             {
-                Text = "Saves a zip with your achievement files, unlock history and game list into a folder you choose. " +
+                Text = "Saves a zip with your game saves, achievement files, unlock history and game list into a folder you choose. " +
                        "Pick a folder inside Google Drive (install Google Drive for desktop), OneDrive or Dropbox, " +
                        "and that app uploads each backup to the cloud for you. Your Steam API key is never included.",
                 Font = Theme.Body,
@@ -849,7 +985,7 @@ namespace AchievementTracker
             };
 
             Label autoLabel = MakeLabel("Back up automatically", Theme.Body, Theme.Text, Theme.Surface);
-            Label autoHint = MakeLabel("30 seconds after you unlock something, and once a day when the app starts", Theme.Small, Theme.Muted, Theme.Surface);
+            Label autoHint = MakeLabel("30 seconds after an unlock (at most every 10 minutes), and once a day at startup", Theme.Small, Theme.Muted, Theme.Surface);
             ToggleSwitch autoToggle = new ToggleSwitch { Checked = settings.AutoBackup };
             autoToggle.CheckedChanged += (s, e) =>
             {
@@ -860,6 +996,15 @@ namespace AchievementTracker
                     return;
                 }
                 AppSettings.Current.AutoBackup = autoToggle.Checked;
+                AppSettings.Save();
+            };
+
+            Label savesLabel = MakeLabel("Include game saves", Theme.Body, Theme.Text, Theme.Surface);
+            Label savesHint = MakeLabel("Found automatically in a community database. Add a folder per game in the Library if one is missing.", Theme.Small, Theme.Muted, Theme.Surface);
+            ToggleSwitch savesToggle = new ToggleSwitch { Checked = settings.IncludeGameSaves };
+            savesToggle.CheckedChanged += (s, e) =>
+            {
+                AppSettings.Current.IncludeGameSaves = savesToggle.Checked;
                 AppSettings.Save();
             };
 
@@ -895,7 +1040,7 @@ namespace AchievementTracker
             backupStatus = new Label { Font = Theme.Body, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
             Label included = new Label
             {
-                Text = "Included: your game list, unlock history, settings and the achievement files of your tracked games. " +
+                Text = "Included: the save files of your tracked games, their achievement files, your unlock history, game list and settings. " +
                        "Screenshots are not included. The 10 newest backups are kept.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
@@ -910,6 +1055,9 @@ namespace AchievementTracker
             card.Controls.Add(autoLabel);
             card.Controls.Add(autoHint);
             card.Controls.Add(autoToggle);
+            card.Controls.Add(savesLabel);
+            card.Controls.Add(savesHint);
+            card.Controls.Add(savesToggle);
             card.Controls.Add(nowButton);
             card.Controls.Add(openButton);
             card.Controls.Add(backupStatus);
@@ -929,11 +1077,15 @@ namespace AchievementTracker
                 autoHint.Location = new Point(20, 238);
                 autoToggle.Location = new Point(20 + w - autoToggle.Width, 220);
 
-                nowButton.SetBounds(20, 284, 140, 38);
-                openButton.SetBounds(168, 284, 170, 38);
+                savesLabel.Location = new Point(20, 268);
+                savesHint.Location = new Point(20, 290);
+                savesToggle.Location = new Point(20 + w - savesToggle.Width, 272);
 
-                backupStatus.SetBounds(20, 340, w, 24);
-                included.SetBounds(20, 376, w, 40);
+                nowButton.SetBounds(20, 336, 140, 38);
+                openButton.SetBounds(168, 336, 170, 38);
+
+                backupStatus.SetBounds(20, 392, w, 24);
+                included.SetBounds(20, 428, w, 40);
             };
 
             page.Controls.Add(card);
