@@ -59,6 +59,10 @@ namespace AchievementTracker
         private RowListBox activityList = null!;
         private Label activityEmpty = null!;
         private Label activitySummary = null!;
+        private StatTile tileWeek = null!;
+        private StatTile tileRarest = null!;
+        private StatTile tileTopGame = null!;
+        private StatTile tileStreak = null!;
 
         // Library page
         private RowListBox gameList = null!;
@@ -820,6 +824,37 @@ namespace AchievementTracker
                 catch { }
             };
 
+            tileWeek = new StatTile { Caption = "Unlocks this week" };
+            tileRarest = new StatTile { Caption = "Rarest unlock" };
+            tileTopGame = new StatTile { Caption = "Most active game" };
+            tileStreak = new StatTile { Caption = "Daily streak" };
+
+            FlatButton exportButton = new FlatButton { Text = "Export CSV", Kind = ButtonKind.Secondary, Height = 34 };
+            exportButton.Click += (s, e) =>
+            {
+                List<UnlockEntry> entries = UnlockHistory.Snapshot();
+                if (entries.Count == 0) { FlashText(exportButton, "Nothing yet"); return; }
+
+                using (SaveFileDialog dialog = new SaveFileDialog())
+                {
+                    dialog.Title = "Export unlock history";
+                    dialog.Filter = "CSV file (*.csv)|*.csv";
+                    dialog.FileName = "unlock_history_" + DateTime.Now.ToString("yyyy-MM-dd") + ".csv";
+                    dialog.RestoreDirectory = true;
+                    if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+                    try
+                    {
+                        HistoryExport.WriteCsv(entries, dialog.FileName);
+                        FlashText(exportButton, "Saved");
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Couldn't save the file: " + ex.Message, "Export", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            };
+
             FlatButton clearButton = new FlatButton { Text = "Clear", Kind = ButtonKind.DangerGhost, Height = 34 };
             clearButton.Click += (s, e) =>
             {
@@ -836,7 +871,12 @@ namespace AchievementTracker
             card.Controls.Add(shotLabel);
             card.Controls.Add(shotToggle);
             card.Controls.Add(folderButton);
+            card.Controls.Add(exportButton);
             card.Controls.Add(clearButton);
+            card.Controls.Add(tileWeek);
+            card.Controls.Add(tileRarest);
+            card.Controls.Add(tileTopGame);
+            card.Controls.Add(tileStreak);
             card.Controls.Add(activityList);
             card.Controls.Add(activityEmpty);
             activityEmpty.BringToFront();
@@ -847,12 +887,19 @@ namespace AchievementTracker
                 activitySummary.Location = new Point(20, 40);
 
                 clearButton.SetBounds(card.Width - 20 - 72, 14, 72, 34);
-                folderButton.SetBounds(clearButton.Left - 8 - 150, 14, 150, 34);
+                exportButton.SetBounds(clearButton.Left - 8 - 100, 14, 100, 34);
+                folderButton.SetBounds(exportButton.Left - 8 - 150, 14, 150, 34);
                 shotToggle.Location = new Point(folderButton.Left - 16 - shotToggle.Width, 19);
                 shotLabel.Location = new Point(shotToggle.Left - 10 - shotLabel.Width, 20);
 
-                activityList.SetBounds(10, 66, card.Width - 20, Math.Max(10, card.Height - 76));
-                activityEmpty.SetBounds(30, 66, Math.Max(10, card.Width - 60), Math.Max(10, card.Height - 76));
+                // four stat tiles in a row under the header
+                int tileGap = 12;
+                int tileWidth = Math.Max(80, (card.Width - 40 - tileGap * 3) / 4);
+                StatTile[] tiles = { tileWeek, tileRarest, tileTopGame, tileStreak };
+                for (int i = 0; i < tiles.Length; i++) tiles[i].SetBounds(20 + i * (tileWidth + tileGap), 66, tileWidth, 84);
+
+                activityList.SetBounds(10, 162, card.Width - 20, Math.Max(10, card.Height - 172));
+                activityEmpty.SetBounds(30, 162, Math.Max(10, card.Width - 60), Math.Max(10, card.Height - 172));
             };
 
             page.Controls.Add(card);
@@ -869,10 +916,26 @@ namespace AchievementTracker
             activityList.EndUpdate();
 
             activityEmpty.Visible = entries.Count == 0;
-            int lastWeek = entries.Count(entry => entry.TimeUtc > DateTime.UtcNow.AddDays(-7));
             activitySummary.Text = entries.Count == 0
                 ? "No unlocks recorded yet"
-                : entries.Count + (entries.Count == 1 ? " unlock" : " unlocks") + " recorded, " + lastWeek + " in the last 7 days";
+                : entries.Count + (entries.Count == 1 ? " unlock" : " unlocks") + " recorded since the history started";
+
+            HistoryStatsResult stats = HistoryStats.Compute(entries, DateTime.Now);
+
+            tileWeek.SetValue(stats.ThisWeek.ToString(), stats.Total + " in total");
+
+            if (stats.Rarest != null && stats.Rarest.Percent.HasValue)
+                tileRarest.SetValue(Rarity.FormatPercent(stats.Rarest.Percent.Value), stats.Rarest.Name + ", " + stats.Rarest.GameName, Theme.Accent);
+            else
+                tileRarest.SetValue("-", "No rarity data yet");
+
+            if (stats.TopGameCount > 0)
+                tileTopGame.SetValue(stats.TopGame, stats.TopGameCount + (stats.TopGameCount == 1 ? " unlock" : " unlocks"));
+            else
+                tileTopGame.SetValue("-", "");
+
+            string streakText = stats.CurrentStreak + (stats.CurrentStreak == 1 ? " day" : " days");
+            tileStreak.SetValue(stats.CurrentStreak > 0 ? streakText : "0 days", "Longest: " + stats.LongestStreak + (stats.LongestStreak == 1 ? " day" : " days"));
         }
 
         private void ActivityList_DrawItem(object? sender, DrawItemEventArgs e)

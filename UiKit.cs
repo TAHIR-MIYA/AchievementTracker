@@ -738,6 +738,57 @@ namespace AchievementTracker
         }
     }
 
+    /// <summary>A small card with a caption, one big value and a line of detail.</summary>
+    public class StatTile : Control
+    {
+        private readonly Font _valueFont = Theme.HeadFont(15f);
+        private string _value = "-";
+        private string _sub = "";
+        private Color _valueColor = Theme.Text;
+
+        public string Caption { get; set; } = "";
+        public Color Backdrop { get; set; } = Theme.Surface;
+
+        public StatTile()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Size = new Size(200, 84);
+        }
+
+        public void SetValue(string value, string sub, Color? valueColor = null)
+        {
+            _value = value;
+            _sub = sub;
+            _valueColor = valueColor ?? Theme.Text;
+            Invalidate();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _valueFont.Dispose();
+            base.Dispose(disposing);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Backdrop);
+            Theme.Smooth(g);
+
+            using (GraphicsPath path = Theme.RoundedRect(new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), 12f))
+            using (SolidBrush fill = new SolidBrush(Theme.Raised))
+            using (Pen pen = new Pen(Theme.Border))
+            {
+                g.FillPath(fill, path);
+                g.DrawPath(pen, path);
+            }
+
+            Theme.DrawText(g, Caption, Theme.Small, Theme.Muted, new Rectangle(16, 8, Width - 32, 18));
+            Theme.DrawText(g, _value, _valueFont, _valueColor, new Rectangle(16, 26, Width - 32, 30));
+            Theme.DrawText(g, _sub, Theme.Small, Theme.TextDim, new Rectangle(16, 58, Width - 32, 18));
+        }
+    }
+
     /// <summary>Small bar chart of when achievements were unlocked (per day, week or month, whichever fits).</summary>
     public class UnlockChart : Control
     {
