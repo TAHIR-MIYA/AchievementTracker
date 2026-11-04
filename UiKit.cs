@@ -738,6 +738,72 @@ namespace AchievementTracker
         }
     }
 
+    /// <summary>Small bar chart of when achievements were unlocked (per day, week or month, whichever fits).</summary>
+    public class UnlockChart : Control
+    {
+        private List<DateTime> _times = new List<DateTime>();
+
+        public Color Backdrop { get; set; } = Theme.Surface;
+
+        public List<DateTime> Times
+        {
+            get => _times;
+            set { _times = value ?? new List<DateTime>(); Invalidate(); }
+        }
+
+        public UnlockChart()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Size = new Size(320, 84);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Backdrop);
+            Theme.Smooth(g);
+            if (_times.Count < 2) return;
+
+            DateTime first = _times.Min().Date;
+            DateTime last = _times.Max().Date;
+            double span = (last - first).TotalDays;
+
+            int bucketDays = span <= 40 ? 1 : span <= 280 ? 7 : 30;
+            int bars = (int)(span / bucketDays) + 1;
+            while (bars > 48)
+            {
+                bucketDays *= 2;
+                bars = (int)(span / bucketDays) + 1;
+            }
+
+            int[] counts = new int[bars];
+            foreach (DateTime time in _times)
+            {
+                int index = (int)((time.Date - first).TotalDays / bucketDays);
+                counts[Math.Min(index, bars - 1)]++;
+            }
+            int maxCount = counts.Max();
+
+            float areaHeight = Height - 24f;
+            float gap = 3f;
+            float barWidth = Math.Max(2f, (Width - gap * (bars - 1)) / bars);
+
+            for (int i = 0; i < bars; i++)
+            {
+                float barHeight = counts[i] == 0 ? 3f : Math.Max(7f, areaHeight * counts[i] / maxCount);
+                RectangleF rect = new RectangleF(i * (barWidth + gap), areaHeight - barHeight, barWidth, barHeight);
+                using (GraphicsPath path = Theme.RoundedRect(rect, Math.Min(3f, barWidth / 2f)))
+                using (SolidBrush brush = new SolidBrush(counts[i] == 0 ? Theme.Hover : Theme.Accent))
+                {
+                    g.FillPath(brush, path);
+                }
+            }
+
+            Theme.DrawText(g, first.ToString("d MMM yyyy"), Theme.Small, Theme.Muted, new Rectangle(0, Height - 20, Width / 2, 20));
+            Theme.DrawText(g, last.ToString("d MMM yyyy"), Theme.Small, Theme.Muted, new Rectangle(Width / 2, Height - 20, Width / 2, 20), TextFormatFlags.Right);
+        }
+    }
+
     /// <summary>Small rounded status badge with a coloured dot.</summary>
     public class StatusPill : Control
     {

@@ -18,6 +18,7 @@ namespace AchievementTracker
         public bool Unlocked { get; set; }
         public bool Hidden { get; set; }
         public double? Percent { get; set; }   // share of all Steam players who unlocked it
+        public DateTime? UnlockedAt { get; set; }
         public Image? Icon { get; set; }
     }
 
@@ -26,6 +27,9 @@ namespace AchievementTracker
         private TrackedGame game;
         private string apiKey;
         private HashSet<string> unlockedAchievements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> unlockTimes = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private UnlockChart unlockChart = null!;
+        private Action layoutHeader = () => { };
         private static readonly HttpClient httpClient = new HttpClient();
 
         private RowListBox achievementList = null!;
@@ -68,14 +72,14 @@ namespace AchievementTracker
             // Search box and All / Unlocked / Locked filter above the list
             Panel filterBar = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Theme.Base };
             searchBox = new ModernTextBox { PlaceholderText = "Search achievements", Backdrop = Theme.Base };
-            filterPicker = new SegmentedControl { Items = new[] { "All", "Unlocked", "Locked" }, Backdrop = Theme.Base };
+            filterPicker = new SegmentedControl { Items = new[] { "All", "Unlocked", "Locked", "Recent" }, Backdrop = Theme.Base };
             searchBox.Inner.TextChanged += (s, e) => ApplyFilter();
             filterPicker.SelectedChanged += (s, e) => ApplyFilter();
             filterBar.Controls.Add(searchBox);
             filterBar.Controls.Add(filterPicker);
             filterBar.Resize += (s, e) =>
             {
-                int pickerWidth = 330;
+                int pickerWidth = 440;
                 filterPicker.SetBounds(filterBar.Width - pickerWidth, 0, pickerWidth, 38);
                 searchBox.SetBounds(0, 0, Math.Max(120, Math.Min(360, filterBar.Width - pickerWidth - 16)), 38);
             };
@@ -120,14 +124,20 @@ namespace AchievementTracker
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
 
+            unlockChart = new UnlockChart { Size = new Size(320, 84), Backdrop = Theme.Surface, Visible = false };
+
             headerPanel.Controls.Add(ring);
             headerPanel.Controls.Add(titleLabel);
             headerPanel.Controls.Add(subtitleLabel);
-            headerPanel.Resize += (s, e) =>
+            headerPanel.Controls.Add(unlockChart);
+            layoutHeader = () =>
             {
-                titleLabel.Width = Math.Max(100, headerPanel.Width - 136 - 28);
-                subtitleLabel.Width = Math.Max(100, headerPanel.Width - 138 - 28);
+                int reserved = unlockChart.Visible ? unlockChart.Width + 24 : 0;
+                unlockChart.Location = new Point(headerPanel.Width - 28 - unlockChart.Width, 24);
+                titleLabel.Width = Math.Max(100, headerPanel.Width - 136 - 28 - reserved);
+                subtitleLabel.Width = Math.Max(100, headerPanel.Width - 138 - 28 - reserved);
             };
+            headerPanel.Resize += (s, e) => layoutHeader();
 
             Controls.Add(listArea);
             Controls.Add(headerPanel);
@@ -182,7 +192,7 @@ namespace AchievementTracker
             }
 
             int textX = iconRect.Right + 16;
-            int statusWidth = 130;
+            int statusWidth = 190;
             int textWidth = Math.Max(40, r.Right - textX - statusWidth - 16);
 
             Color nameColor = row.Unlocked ? Theme.Text : Theme.TextDim;
@@ -196,7 +206,10 @@ namespace AchievementTracker
             Rectangle statusRect = row.Percent.HasValue
                 ? new Rectangle(statusX, r.Y + 14, statusWidth, 24)
                 : new Rectangle(statusX, r.Y, statusWidth, r.Height);
-            Theme.DrawText(g, row.Unlocked ? "Unlocked" : "Locked", Theme.BodyStrong, row.Unlocked ? Theme.Accent : Theme.Muted, statusRect, TextFormatFlags.Right);
+            string statusText = row.Unlocked
+                ? (row.UnlockedAt.HasValue ? "Unlocked, " + row.UnlockedAt.Value.ToString("d MMM yyyy") : "Unlocked")
+                : "Locked";
+            Theme.DrawText(g, statusText, Theme.BodyStrong, row.Unlocked ? Theme.Accent : Theme.Muted, statusRect, TextFormatFlags.Right);
 
             if (row.Percent.HasValue)
             {
@@ -231,7 +244,14 @@ namespace AchievementTracker
                     foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                     {
                         if (prop.Value.ValueKind == JsonValueKind.Object && prop.Value.TryGetProperty("earned", out JsonElement earned) && earned.GetBoolean())
+                        {
                             unlockedAchievements.Add(prop.Name);
+                            if (prop.Value.TryGetProperty("earned_time", out JsonElement earnedTime) && earnedTime.ValueKind == JsonValueKind.Number &&
+                                earnedTime.TryGetInt64(out long seconds) && seconds > 0)
+                            {
+                                RememberUnlockTime(prop.Name, DateTimeOffset.FromUnixTimeSeconds(seconds).LocalDateTime);
+                            }
+                        }
                         else if (prop.Value.ValueKind == JsonValueKind.True) unlockedAchievements.Add(prop.Name);
                     }
                 } catch { }
@@ -251,9 +271,11 @@ namespace AchievementTracker
                         {
                             try
                             {
-                                foreach (var entry in AchievementIni.Read(file))
+                                foreach (var entry in AchievementIni.ReadWithTimes(file))
                                 {
-                                    if (entry.Value) unlockedAchievements.Add(entry.Key);
+                                    if (!entry.Value.Unlocked) continue;
+                                    unlockedAchievements.Add(entry.Key);
+                                    if (entry.Value.Time.HasValue) RememberUnlockTime(entry.Key, entry.Value.Time.Value);
                                 }
                             }
                             catch { }
@@ -261,6 +283,12 @@ namespace AchievementTracker
                     }
                 }
             }
+        }
+
+        // If several files know the time, the earliest wins.
+        private void RememberUnlockTime(string achievementName, DateTime time)
+        {
+            if (!unlockTimes.TryGetValue(achievementName, out DateTime existing) || time < existing) unlockTimes[achievementName] = time;
         }
 
         private async Task FetchAndPopulateSteamData()
@@ -310,6 +338,7 @@ namespace AchievementTracker
 
                     AchievementRow row = new AchievementRow { Name = displayName, Description = description, Unlocked = isUnlocked, Hidden = isHidden };
                     if (Program.TryGetRarity(game.AppId, internalName, out double rarityPercent)) row.Percent = rarityPercent;
+                    if (isUnlocked && unlockTimes.TryGetValue(internalName, out DateTime unlockedAt)) row.UnlockedAt = unlockedAt;
                     string targetIcon = isUnlocked ? iconUrl : iconGrayUrl;
 
                     if (isUnlocked) unlocked.Add((row, targetIcon));
@@ -325,12 +354,24 @@ namespace AchievementTracker
                 {
                     "All " + totalCount,
                     "Unlocked " + unlockedCount,
-                    "Locked " + (totalCount - unlockedCount)
+                    "Locked " + (totalCount - unlockedCount),
+                    "Recent"
                 };
                 ApplyFilter();
 
                 ring.Value = totalCount == 0 ? 0f : (float)unlockedCount / totalCount;
                 subtitleLabel.Text = unlockedCount + " of " + totalCount + " achievements unlocked";
+
+                // Timeline: a bar chart of when they were unlocked, and how long it took
+                List<DateTime> times = allRows.Where(row => row.UnlockedAt.HasValue).Select(row => row.UnlockedAt!.Value).ToList();
+                if (times.Count >= 2)
+                {
+                    int days = (int)(times.Max().Date - times.Min().Date).TotalDays + 1;
+                    subtitleLabel.Text += ", over " + days + (days == 1 ? " day" : " days");
+                    unlockChart.Times = times;
+                    unlockChart.Visible = true;
+                    layoutHeader();
+                }
 
                 foreach (var item in ordered)
                 {
@@ -350,7 +391,11 @@ namespace AchievementTracker
 
             achievementList.BeginUpdate();
             achievementList.Items.Clear();
-            foreach (AchievementRow row in allRows)
+            IEnumerable<AchievementRow> source = mode == 3
+                ? allRows.Where(item => item.Unlocked).OrderByDescending(item => item.UnlockedAt ?? DateTime.MinValue)
+                : allRows;
+
+            foreach (AchievementRow row in source)
             {
                 if (mode == 1 && !row.Unlocked) continue;
                 if (mode == 2 && row.Unlocked) continue;
