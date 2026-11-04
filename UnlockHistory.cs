@@ -70,6 +70,19 @@ namespace AchievementTracker
             Changed?.Invoke(null, EventArgs.Empty);
         }
 
+        /// <summary>Used by Restore: replaces the whole history with the one from a backup.</summary>
+        public static void ReplaceFromJson(string json)
+        {
+            List<UnlockEntry>? restored = JsonSerializer.Deserialize<List<UnlockEntry>>(json);
+            if (restored == null) return;
+            lock (Gate)
+            {
+                entries = restored.OrderByDescending(e => e.TimeUtc).Take(MaxEntries).ToList();
+                Save();
+            }
+            Changed?.Invoke(null, EventArgs.Empty);
+        }
+
         public static void Clear()
         {
             lock (Gate)

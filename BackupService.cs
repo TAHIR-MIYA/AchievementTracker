@@ -9,6 +9,24 @@ using System.Threading.Tasks;
 
 namespace AchievementTracker
 {
+    // One restorable item inside a backup zip (written to manifest.json)
+    public class BackupItem
+    {
+        public string Kind { get; set; } = "";        // save, achievement, gamelist, history
+        public string Game { get; set; } = "";
+        public string AppId { get; set; } = "";
+        public string EntryRoot { get; set; } = "";   // folder (or file) name inside the zip
+        public string Original { get; set; } = "";    // where it came from on this PC
+        public bool IsFile { get; set; }
+    }
+
+    public class BackupManifest
+    {
+        public int Version { get; set; } = 1;
+        public string Created { get; set; } = "";
+        public List<BackupItem> Items { get; set; } = new List<BackupItem>();
+    }
+
     public class BackupResult
     {
         public bool Ok { get; set; }
@@ -87,11 +105,17 @@ namespace AchievementTracker
                 int fileCount = 0;
                 int saveFileCount = 0;
                 List<string> sources = new List<string>();
+                List<BackupItem> items = new List<BackupItem>();
 
                 using (ZipArchive zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
                 {
-                    fileCount += AddFile(zip, AppPaths.InBase("tracked_games.json"), "tracker/tracked_games.json");
-                    fileCount += AddFile(zip, UnlockHistory.FilePath, "tracker/unlock_history.json");
+                    int gameListAdded = AddFile(zip, AppPaths.InBase("tracked_games.json"), "tracker/tracked_games.json");
+                    if (gameListAdded > 0)
+                        items.Add(new BackupItem { Kind = "gamelist", EntryRoot = "tracker/tracked_games.json", Original = AppPaths.InBase("tracked_games.json"), IsFile = true });
+                    int historyAdded = AddFile(zip, UnlockHistory.FilePath, "tracker/unlock_history.json");
+                    if (historyAdded > 0)
+                        items.Add(new BackupItem { Kind = "history", EntryRoot = "tracker/unlock_history.json", Original = UnlockHistory.FilePath, IsFile = true });
+                    fileCount += gameListAdded + historyAdded;
 
                     // Settings, but never the Steam API key
                     AppSettings? copy = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(settings));
@@ -118,6 +142,11 @@ namespace AchievementTracker
                             {
                                 fileCount += added;
                                 sources.Add("achievements/" + folder.Label + "/" + game.AppId + "/   came from   " + folder.Dir);
+                                items.Add(new BackupItem
+                                {
+                                    Kind = "achievement", Game = game.Name, AppId = game.AppId,
+                                    EntryRoot = "achievements/" + folder.Label + "/" + game.AppId + "/", Original = folder.Dir, IsFile = false
+                                });
                             }
                         }
                     }
@@ -141,11 +170,19 @@ namespace AchievementTracker
                                     fileCount += added;
                                     saveFileCount += added;
                                     sources.Add(entryRoot + "   came from   " + location);
+                                    items.Add(new BackupItem
+                                    {
+                                        Kind = "save", Game = game.Name, AppId = game.AppId,
+                                        EntryRoot = entryRoot, Original = location, IsFile = File.Exists(location)
+                                    });
                                 }
                             }
                         }
                     }
 
+                    AddText(zip, "manifest.json", JsonSerializer.Serialize(
+                        new BackupManifest { Created = DateTime.Now.ToString("s"), Items = items },
+                        new JsonSerializerOptions { WriteIndented = true }));
                     AddText(zip, "README.txt", BuildReadme(fileCount, sources));
                 }
 

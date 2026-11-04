@@ -1037,6 +1037,15 @@ namespace AchievementTracker
                 catch { }
             };
 
+            FlatButton restoreButton = new FlatButton { Text = "Restore from backup", Kind = ButtonKind.Secondary };
+            restoreButton.Click += (s, e) =>
+            {
+                using (RestoreWindow window = new RestoreWindow(this))
+                {
+                    window.ShowDialog(this);
+                }
+            };
+
             backupStatus = new Label { Font = Theme.Body, ForeColor = Theme.Muted, BackColor = Theme.Surface, AutoEllipsis = true };
             Label included = new Label
             {
@@ -1060,6 +1069,7 @@ namespace AchievementTracker
             card.Controls.Add(savesToggle);
             card.Controls.Add(nowButton);
             card.Controls.Add(openButton);
+            card.Controls.Add(restoreButton);
             card.Controls.Add(backupStatus);
             card.Controls.Add(included);
 
@@ -1083,6 +1093,7 @@ namespace AchievementTracker
 
                 nowButton.SetBounds(20, 336, 140, 38);
                 openButton.SetBounds(168, 336, 170, 38);
+                restoreButton.SetBounds(346, 336, 190, 38);
 
                 backupStatus.SetBounds(20, 392, w, 24);
                 included.SetBounds(20, 428, w, 40);
@@ -1387,5 +1398,25 @@ namespace AchievementTracker
         }
 
         public List<TrackedGame> GetTrackedGames() => games;
+
+        // Used by Restore: replaces the game list with the one from a backup.
+        public void ApplyRestoredGameList(string json)
+        {
+            List<TrackedGame>? restored = JsonSerializer.Deserialize<List<TrackedGame>>(json);
+            if (restored == null) return;
+
+            foreach (TrackedGame game in restored)
+            {
+                TrackedGame? existing = games.FirstOrDefault(g => g.AppId == game.AppId);
+                if (existing != null) game.Cover = existing.Cover;   // keep covers that are already loaded
+            }
+
+            games = restored;
+            SaveGames();
+            RefreshGameListUI();
+            Program.UpdateWatchers(games);
+            foreach (TrackedGame game in games) LoadCoverInBackground(game);
+            Program.TriggerDataDownload(games, SavedApiKey);
+        }
     }
 }

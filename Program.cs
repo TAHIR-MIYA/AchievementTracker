@@ -17,6 +17,15 @@ namespace AchievementTracker
         
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
         static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
+        static DateTime suppressAlertsUntil = DateTime.MinValue;
+        static bool AlertsSuppressed => DateTime.UtcNow < suppressAlertsUntil;
+
+        // While files are being restored, unlocks found in them are remembered silently (no popups, no history).
+        public static void SuppressAlertsFor(int seconds)
+        {
+            suppressAlertsUntil = DateTime.UtcNow.AddSeconds(seconds);
+        }
+
         static string rarityPath = AppPaths.InBase("achievement_rarity.json");
         static ConcurrentDictionary<string, double> achievementRarity = new ConcurrentDictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         static ConcurrentDictionary<string, bool> previousState = new ConcurrentDictionary<string, bool>();   // watchers run on several threads
@@ -183,7 +192,7 @@ namespace AchievementTracker
                     if (isEarned && (!previousState.ContainsKey(stateKey) || !previousState[stateKey]))
                     {
                         previousState[stateKey] = true; 
-                        TriggerUI(appId, achKey);
+                        if (!AlertsSuppressed) TriggerUI(appId, achKey);
                     }
                     else if (!isEarned && previousState.ContainsKey(stateKey))
                     {
@@ -227,7 +236,7 @@ namespace AchievementTracker
                         if (!previousState.TryGetValue(stateKey, out bool wasUnlocked) || !wasUnlocked)
                         {
                             previousState[stateKey] = true;
-                            TriggerUI(appId, entry.Key);
+                            if (!AlertsSuppressed) TriggerUI(appId, entry.Key);
                         }
                     }
                     else
