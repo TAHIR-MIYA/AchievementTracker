@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -66,11 +67,24 @@ namespace AchievementTracker
             cts = null;
         }
 
-        public static void Broadcast(string name, string iconUrl, double? percent = null)
+        public static void Broadcast(PopupData data)
         {
             if (!IsRunning) return;
             AppSettings settings = AppSettings.Current;
-            string json = JsonSerializer.Serialize(new { name, icon = iconUrl, percent, pos = settings.PopupPosition, seconds = settings.PopupSeconds });
+
+            // A milestone shows the game's cover, which the page loads from /cover/<App ID>
+            string icon = !string.IsNullOrEmpty(data.CoverAppId) && data.CoverAppId.All(char.IsDigit) ? "/cover/" + data.CoverAppId : data.Icon;
+            string json = JsonSerializer.Serialize(new
+            {
+                name = data.Name,
+                icon,
+                percent = data.Percent,
+                pos = settings.PopupPosition,
+                seconds = settings.PopupSeconds,
+                header = data.Header,
+                right = data.RightText,
+                hi = data.Highlight
+            });
             Send("data: " + json + "\n\n");
         }
 
@@ -142,6 +156,19 @@ namespace AchievementTracker
                     res.ContentType = "audio/mpeg";
                     res.ContentLength64 = audio.Length;
                     res.OutputStream.Write(audio, 0, audio.Length);
+                    res.Close();
+                    return;
+                }
+
+                if (path.StartsWith("/cover/", StringComparison.Ordinal))
+                {
+                    string id = path.Substring("/cover/".Length);
+                    string? coverFile = id.Length > 0 && id.All(char.IsDigit) ? SteamStore.CachedCoverPath(id) : null;
+                    if (coverFile == null) { res.StatusCode = 404; res.Close(); return; }
+                    byte[] coverBytes = File.ReadAllBytes(coverFile);
+                    res.ContentType = "image/jpeg";
+                    res.ContentLength64 = coverBytes.Length;
+                    res.OutputStream.Write(coverBytes, 0, coverBytes.Length);
                     res.Close();
                     return;
                 }
@@ -259,7 +286,8 @@ namespace AchievementTracker
     card.style.transform = hidden;
 
     const img = document.createElement('img');
-    img.src = (typeof a.icon === 'string' && /^https?:\/\//i.test(a.icon)) ? a.icon : '/icon.ico';
+    const okIcon = typeof a.icon === 'string' && (/^https?:\/\//i.test(a.icon) || a.icon.indexOf('/cover/') === 0);
+    img.src = okIcon ? a.icon : '/icon.ico';
     img.onerror = function () { img.style.visibility = 'hidden'; };
 
     const text = document.createElement('div');
@@ -269,9 +297,14 @@ namespace AchievementTracker
     top.className = 'top';
     const small = document.createElement('span');
     small.className = 'small';
-    small.textContent = 'Achievement unlocked';
+    small.textContent = a.header || 'Achievement unlocked';
     top.appendChild(small);
-    if (typeof a.percent === 'number') {
+    if (typeof a.right === 'string' && a.right) {
+      const extra = document.createElement('span');
+      extra.className = 'rare' + (a.hi ? ' hi' : '');
+      extra.textContent = a.right;
+      top.appendChild(extra);
+    } else if (typeof a.percent === 'number') {
       const rare = document.createElement('span');
       rare.className = 'rare' + (a.percent < 20 ? ' hi' : '');
       rare.textContent = tier(a.percent) + ' ' + fmt(a.percent);

@@ -17,6 +17,7 @@ namespace AchievementTracker
         public int SoundVolume { get; set; } = 50;       // 0-100, unlock sound of the desktop popup
         public string PopupPosition { get; set; } = "top-right";   // top-left, top-right, bottom-left, bottom-right
         public int PopupSeconds { get; set; } = 5;       // how long the popup stays fully visible
+        public bool MilestonePopups { get; set; } = true;        // special popup at 25 / 50 / 75 / 100 % of a game
         public bool ScreenshotOnUnlock { get; set; } = false;   // save a screenshot of the game when something unlocks
         public string BackupFolder { get; set; } = "";           // where backup zips go (can be inside Google Drive, OneDrive...)
         public bool AutoBackup { get; set; } = false;

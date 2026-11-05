@@ -1203,7 +1203,7 @@ namespace AchievementTracker
             right.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 140));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
-            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 140));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
             right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             right.Controls.Add(BuildApiCard(), 0, 0);
@@ -1390,9 +1390,9 @@ namespace AchievementTracker
             CardPanel card = NewCard();
 
             Label title = MakeLabel("General", Theme.Heading, Theme.Text, Theme.Surface);
-            Label label = MakeLabel("Start with Windows", Theme.Body, Theme.Text, Theme.Surface);
-            Label hint = MakeLabel("Runs in the tray at login so no unlock is missed", Theme.Small, Theme.Muted, Theme.Surface);
 
+            Label startLabel = MakeLabel("Start with Windows", Theme.Body, Theme.Text, Theme.Surface);
+            Label startHint = MakeLabel("Runs in the tray at login so no unlock is missed", Theme.Small, Theme.Muted, Theme.Surface);
             startupToggle = new ToggleSwitch { Checked = StartupManager.IsEnabled() };
             startupToggle.CheckedChanged += (s, e) =>
             {
@@ -1407,16 +1407,31 @@ namespace AchievementTracker
                 }
             };
 
+            Label milestoneLabel = MakeLabel("Milestone popups", Theme.Body, Theme.Text, Theme.Surface);
+            Label milestoneHint = MakeLabel("A special popup at 25, 50, 75 and 100% of a game", Theme.Small, Theme.Muted, Theme.Surface);
+            ToggleSwitch milestoneToggle = new ToggleSwitch { Checked = AppSettings.Current.MilestonePopups };
+            milestoneToggle.CheckedChanged += (s, e) =>
+            {
+                AppSettings.Current.MilestonePopups = milestoneToggle.Checked;
+                AppSettings.Save();
+            };
+
             card.Controls.Add(title);
-            card.Controls.Add(label);
-            card.Controls.Add(hint);
+            card.Controls.Add(startLabel);
+            card.Controls.Add(startHint);
             card.Controls.Add(startupToggle);
+            card.Controls.Add(milestoneLabel);
+            card.Controls.Add(milestoneHint);
+            card.Controls.Add(milestoneToggle);
             card.Resize += (s, e) =>
             {
                 title.Location = new Point(20, 16);
-                label.Location = new Point(20, 48);
-                hint.Location = new Point(20, 70);
-                startupToggle.Location = new Point(card.Width - 20 - startupToggle.Width, 50);
+                startLabel.Location = new Point(20, 44);
+                startHint.Location = new Point(20, 64);
+                startupToggle.Location = new Point(card.Width - 20 - startupToggle.Width, 46);
+                milestoneLabel.Location = new Point(20, 92);
+                milestoneHint.Location = new Point(20, 112);
+                milestoneToggle.Location = new Point(card.Width - 20 - milestoneToggle.Width, 94);
             };
             return card;
         }
@@ -1452,10 +1467,10 @@ namespace AchievementTracker
             Label steps = new Label
             {
                 Text = "1. Press Copy OBS URL in the Popups card.\n" +
-                       "2. In OBS, add a Browser source and paste the URL.\n" +
-                       "3. Set its size to your canvas, for example 1920 x 1080.\n" +
-                       "4. Drag the source above your Game Capture.\n\n" +
-                       "Add ?sound=1 to the URL if your recording has no desktop audio.\n" +
+                       "2. In OBS add a Browser source and paste the URL.\n" +
+                       "3. Set its size to your canvas, e.g. 1920 x 1080.\n" +
+                       "4. Drag it above your Game Capture.\n" +
+                       "Add ?sound=1 to the URL if you record no desktop audio.\n" +
                        "Popups only show over a game in Borderless or Windowed mode.",
                 Font = Theme.Small,
                 ForeColor = Theme.TextDim,

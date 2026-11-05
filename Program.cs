@@ -92,6 +92,7 @@ namespace AchievementTracker
             trayIcon.ContextMenuStrip.Items.Add("Open Dashboard", null, (s, e) => ShowDashboard());
             trayIcon.ContextMenuStrip.Items.Add("Open Activity", null, (s, e) => ShowDashboard(true));
             trayIcon.ContextMenuStrip.Items.Add("Test popup", null, (s, e) => ShowTestPopup());
+            trayIcon.ContextMenuStrip.Items.Add("Test milestone popup", null, (s, e) => ShowTestMilestone());
             trayIcon.ContextMenuStrip.Items.Add("-");
             trayIcon.ContextMenuStrip.Items.Add(startItem);
             trayIcon.ContextMenuStrip.Items.Add("-");
@@ -288,6 +289,55 @@ namespace AchievementTracker
 
             RecordUnlock(appId, achKey, displayName, percent);
             ShowPopup(displayName, iconUrl, percent);
+            CheckMilestones(appId);
+        }
+
+        static string GetGameName(string appId)
+        {
+            try
+            {
+                TrackedGame? tracked = dashboard?.GetTrackedGames().FirstOrDefault(g => g.AppId == appId);
+                if (tracked != null && tracked.Name.Length > 0) return tracked.Name;
+            }
+            catch { }
+            return "App " + appId;
+        }
+
+        // Shows a special popup when this unlock takes a game past 25, 50, 75 or 100 percent of its achievements.
+        static void CheckMilestones(string appId)
+        {
+            if (!AppSettings.Current.MilestonePopups) return;
+            try
+            {
+                string prefix = appId + "_";
+                int total = achievementNames.Keys.Count(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                if (total < 4) return;   // the names come from Steam (needs your API key); with so few achievements percentages mean little
+
+                int unlocked = previousState.Count(entry => entry.Value && entry.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                unlocked = Math.Min(unlocked, total);
+                if (unlocked <= 0) return;
+                int before = unlocked - 1;
+
+                // the highest milestone this single unlock crossed (integer maths, no rounding surprises)
+                int reached = 0;
+                foreach (int step in new[] { 25, 50, 75, 100 })
+                {
+                    if (unlocked * 100 >= step * total && before * 100 < step * total) reached = step;
+                }
+                if (reached == 0) return;
+
+                string game = GetGameName(appId);
+                bool completed = reached == 100;
+                ShowPopup(new PopupData
+                {
+                    Name = completed ? "All achievements in " + game : game + ": " + reached + "% complete",
+                    Header = completed ? "Game completed" : "Milestone reached",
+                    RightText = unlocked + " of " + total,
+                    Highlight = true,
+                    CoverAppId = appId
+                });
+            }
+            catch { }
         }
 
         // Saves the unlock to the history (and takes a screenshot if enabled) without slowing the popup down.
@@ -483,7 +533,7 @@ namespace AchievementTracker
         // ---- POPUPS ----
         // One worker thread shows popups one after another, so several unlocks at once
         // no longer pile up on top of each other (the old code started a new thread per popup).
-        static readonly BlockingCollection<(string Name, string Icon, double? Percent)> popupQueue = new BlockingCollection<(string Name, string Icon, double? Percent)>();
+        static readonly BlockingCollection<PopupData> popupQueue = new BlockingCollection<PopupData>();
 
         static void StartPopupWorker()
         {
@@ -493,7 +543,7 @@ namespace AchievementTracker
                 {
                     try
                     {
-                        using OverlayWindow window = new OverlayWindow(item.Name, item.Icon, item.Percent);
+                        using OverlayWindow window = new OverlayWindow(item);
                         Application.Run(window);
                     }
                     catch { }
@@ -505,14 +555,27 @@ namespace AchievementTracker
             worker.Start();
         }
 
-        static void ShowPopup(string achievementName, string iconUrl, double? percent = null)
+        static void ShowPopup(PopupData data)
         {
             AppSettings settings = AppSettings.Current;
-            if (settings.ObsOverlay) OverlayServer.Broadcast(achievementName, iconUrl, percent);   // browser source (OBS)
-            if (settings.DesktopPopup) popupQueue.Add((achievementName, iconUrl, percent));         // on-screen popup
+            if (settings.ObsOverlay) OverlayServer.Broadcast(data);   // browser source (OBS)
+            if (settings.DesktopPopup) popupQueue.Add(data);          // on-screen popup
+        }
+
+        static void ShowPopup(string achievementName, string iconUrl, double? percent = null)
+        {
+            ShowPopup(new PopupData { Name = achievementName, Icon = iconUrl, Percent = percent });
         }
 
         public static void ShowTestPopup() => ShowPopup("Test Achievement", "", 1.8);
+
+        public static void ShowTestMilestone() => ShowPopup(new PopupData
+        {
+            Name = "Test Game: 50% complete",
+            Header = "Milestone reached",
+            RightText = "12 of 24",
+            Highlight = true
+        });
 
         // Starts or stops the local OBS overlay server according to the current settings.
         public static void ApplyOverlaySettings()

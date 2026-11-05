@@ -29,6 +29,13 @@ namespace AchievementTracker
         private static string CoverDir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AchievementTracker", "covers");
 
+        /// <summary>The cached cover file for a game, or null if it hasn't been downloaded.</summary>
+        public static string? CachedCoverPath(string appId)
+        {
+            string file = Path.Combine(CoverDir, appId + ".jpg");
+            return File.Exists(file) ? file : null;
+        }
+
         public static async Task<LookupResult> LookupAsync(string appId)
         {
             try

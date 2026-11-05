@@ -74,6 +74,10 @@ namespace AchievementTracker
         private readonly string _achievementName;
         private readonly string _iconUrl;
         private readonly double? _percent;
+        private readonly string _header;
+        private readonly string? _rightText;
+        private readonly bool _highlight;
+        private readonly string _coverAppId;
         private Image? _icon;
         private readonly System.Windows.Forms.Timer _animTimer = new System.Windows.Forms.Timer { Interval = 15 };
         private readonly Stopwatch _clock = new Stopwatch();
@@ -81,11 +85,15 @@ namespace AchievementTracker
         private int _shownTop;
         private int _hiddenTop;
 
-        public OverlayWindow(string achievementName, string iconUrl, double? percent = null)
+        public OverlayWindow(PopupData data)
         {
-            _achievementName = achievementName;
-            _iconUrl = iconUrl;
-            _percent = percent;
+            _achievementName = data.Name;
+            _iconUrl = data.Icon;
+            _percent = data.Percent;
+            _header = data.Header ?? "Achievement unlocked";
+            _rightText = data.RightText;
+            _highlight = data.Highlight;
+            _coverAppId = data.CoverAppId ?? "";
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
             this.Text = "AchievementTracker Overlay"; // stable title so capture tools can find it
@@ -108,6 +116,26 @@ namespace AchievementTracker
                 if (appIcon != null) _icon = new System.Drawing.Icon(appIcon, new Size(64, 64)).ToBitmap();
             }
             catch { }
+
+            // Milestone popups show the game's cover art
+            if (_coverAppId.Length > 0)
+            {
+                try
+                {
+                    string? coverFile = SteamStore.CachedCoverPath(_coverAppId);
+                    if (coverFile != null)
+                    {
+                        using (MemoryStream ms = new MemoryStream(File.ReadAllBytes(coverFile)))
+                        using (Image tmp = Image.FromStream(ms))
+                        {
+                            Image? previous = _icon;
+                            _icon = new Bitmap(tmp);
+                            previous?.Dispose();
+                        }
+                    }
+                }
+                catch { }
+            }
 
             _animTimer.Tick += AnimTimer_Tick;
             this.Load += OverlayWindow_Load;
@@ -225,37 +253,17 @@ namespace AchievementTracker
                 g.FillRectangle(bg, bounds);
             }
 
-            // Icon (rounded)
+            // Icon (rounded, cropped to fill: Steam icons are square, covers are wide)
             Rectangle iconRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
-            bool drewIcon = false;
-            Image? icon = _icon;
-            if (icon != null)
-            {
-                using (GraphicsPath clip = Theme.RoundedRect(iconRect, 10f))
-                {
-                    GraphicsState state = g.Save();
-                    try
-                    {
-                        g.SetClip(clip);
-                        g.DrawImage(icon, iconRect);
-                        drewIcon = true;
-                    }
-                    catch { _icon = null; }
-                    finally { g.Restore(state); }
-                }
-            }
-            if (!drewIcon)
-            {
-                using (GraphicsPath p = Theme.RoundedRect(iconRect, 10f))
-                using (SolidBrush b = new SolidBrush(Theme.Hover))
-                {
-                    g.FillPath(b, p);
-                }
-            }
+            Theme.DrawCover(g, iconRect, _icon, _achievementName, _coverAppId, 10f);
 
             // Text
-            Theme.DrawText(g, "Achievement unlocked", Theme.Small, Theme.Accent, new Rectangle(84, 16, 150, 18));
-            if (_percent.HasValue)
+            Theme.DrawText(g, _header, Theme.Small, Theme.Accent, new Rectangle(84, 16, 150, 18));
+            if (_rightText != null)
+            {
+                Theme.DrawText(g, _rightText, Theme.Small, _highlight ? Theme.Accent : Theme.Muted, new Rectangle(236, 16, Width - 236 - 16, 18), TextFormatFlags.Right);
+            }
+            else if (_percent.HasValue)
             {
                 Color rarityColor = Rarity.IsHighlighted(_percent.Value) ? Theme.Accent : Theme.Muted;
                 Theme.DrawText(g, Rarity.Label(_percent.Value), Theme.Small, rarityColor, new Rectangle(236, 16, Width - 236 - 16, 18), TextFormatFlags.Right);
