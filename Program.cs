@@ -17,6 +17,44 @@ namespace AchievementTracker
         
         static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
         static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
+        // ---- PROGRESS: how many of a game's achievements are unlocked (shown in the Library) ----
+        public static event EventHandler? ProgressChanged;
+        static readonly ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)> progressCache = new ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)>();
+
+        static void NotifyProgressChanged()
+        {
+            progressCache.Clear();
+            ProgressChanged?.Invoke(null, EventArgs.Empty);
+        }
+
+        /// <summary>False if the game's total isn't known yet (the names come from Steam and need your API key).</summary>
+        public static bool GetProgress(string appId, out int unlocked, out int total)
+        {
+            long now = Environment.TickCount64;
+            if (progressCache.TryGetValue(appId, out (int Unlocked, int Total, long Tick) cached) && now - cached.Tick < 1500)
+            {
+                unlocked = cached.Unlocked;
+                total = cached.Total;
+                return total > 0;
+            }
+
+            unlocked = 0;
+            total = 0;
+            try
+            {
+                string prefix = appId + "_";
+                total = achievementNames.Keys.Count(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                unlocked = Math.Min(total, previousState.Count(entry => entry.Value && entry.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)));
+            }
+            catch
+            {
+                unlocked = 0;
+                total = 0;   // the name list was being updated at that moment; try again on the next paint
+            }
+            progressCache[appId] = (unlocked, total, now);
+            return total > 0;
+        }
+
         static DateTime suppressAlertsUntil = DateTime.MinValue;
         static bool AlertsSuppressed => DateTime.UtcNow < suppressAlertsUntil;
 
@@ -290,6 +328,7 @@ namespace AchievementTracker
             RecordUnlock(appId, achKey, displayName, percent);
             ShowPopup(displayName, iconUrl, percent);
             CheckMilestones(appId);
+            NotifyProgressChanged();
         }
 
         static string GetGameName(string appId)
@@ -451,6 +490,7 @@ namespace AchievementTracker
                 SaveRarity();
             }
             catch { }
+            NotifyProgressChanged();
         }
 
         // ---- RARITY: share of all Steam players who unlocked each achievement ----

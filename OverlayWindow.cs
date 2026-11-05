@@ -284,8 +284,9 @@ namespace AchievementTracker
             }
 
             // Soft anti-aliased border
+            bool ultraRare = _rightText == null && _percent.HasValue && _percent.Value < 5;   // under 5% of players
             using (GraphicsPath outline = Theme.RoundedRect(new RectangleF(1, 1, Width - 2, Height - 2), CornerRadius - 1))
-            using (Pen pen = new Pen(Theme.Border, 2f))
+            using (Pen pen = new Pen(ultraRare ? Theme.Accent : Theme.Border, 2f))
             {
                 g.DrawPath(pen, outline);
             }

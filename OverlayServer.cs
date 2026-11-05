@@ -233,6 +233,7 @@ namespace AchievementTracker
     box-shadow: 0 8px 28px rgba(0,0,0,.5);
     transition: transform .45s cubic-bezier(.2,.9,.3,1);
   }
+  .card.ultra { border-color: #F2B544; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 22px rgba(242,181,68,.35); }
   .card img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: #2A3242; flex: none; }
   .text { flex: 1; min-width: 0; }
   .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
@@ -282,7 +283,7 @@ namespace AchievementTracker
     place(pos);
 
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + ((typeof a.percent === 'number' && a.percent < 5 && !a.right) ? ' ultra' : '');
     card.style.transform = hidden;
 
     const img = document.createElement('img');

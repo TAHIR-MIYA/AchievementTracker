@@ -134,6 +134,15 @@ namespace AchievementTracker
             foreach (TrackedGame game in games) LoadCoverInBackground(game);
 
             RefreshBackupStatus();
+            Program.ProgressChanged += (s, e) =>
+            {
+                // after an unlock, or when the achievement names finish downloading
+                try
+                {
+                    if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(() => { gameList.Invalidate(); UpdateDetail(); }));
+                }
+                catch { }
+            };
             BackupService.Completed += (s, e) =>
             {
                 try { if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(RefreshBackupStatus)); } catch { }
@@ -623,7 +632,8 @@ namespace AchievementTracker
             if (game != null)
             {
                 detailName.Text = game.Name;
-                detailId.Text = "App ID " + game.AppId;
+                detailId.Text = "App ID " + game.AppId +
+                    (Program.GetProgress(game.AppId, out int detailUnlocked, out int detailTotal) ? "   " + detailUnlocked + " of " + detailTotal + " unlocked" : "");
                 detailAvatar.GameName = game.Name;
                 detailAvatar.Seed = game.AppId;
                 detailAvatar.Cover = game.Cover;
@@ -656,8 +666,39 @@ namespace AchievementTracker
             }
 
             Theme.DrawCover(g, new Rectangle(r.X + 10, r.Y + (r.Height - 42) / 2, 90, 42), game.Cover, game.Name, game.AppId, 8f);
-            Theme.DrawText(g, game.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 114, r.Y + 10, r.Width - 126, 22));
-            Theme.DrawText(g, "App ID " + game.AppId, Theme.Small, Theme.Muted, new Rectangle(r.X + 114, r.Y + 32, r.Width - 126, 18));
+
+            int textWidth = r.Width - 126;
+            if (Program.GetProgress(game.AppId, out int unlockedCount, out int totalCount))
+            {
+                bool complete = unlockedCount >= totalCount;
+                int percent = complete ? 100 : (int)Math.Floor(unlockedCount * 100.0 / totalCount);   // never show 100% before it is done
+                Color progressColor = complete ? Theme.Good : Theme.Accent;
+
+                Theme.DrawText(g, game.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 114, r.Y + 8, textWidth - 56, 22));
+                Theme.DrawText(g, percent + "%", Theme.BodyStrong, complete ? Theme.Good : Theme.TextDim, new Rectangle(r.Right - 16 - 52, r.Y + 8, 52, 22), TextFormatFlags.Right);
+                Theme.DrawText(g, unlockedCount + " of " + totalCount + " unlocked", Theme.Small, Theme.Muted, new Rectangle(r.X + 114, r.Y + 28, textWidth, 16));
+
+                RectangleF track = new RectangleF(r.X + 114, r.Bottom - 14, textWidth, 5);
+                using (System.Drawing.Drawing2D.GraphicsPath trackPath = Theme.RoundedRect(track, 2.5f))
+                using (SolidBrush trackBrush = new SolidBrush(Theme.Hover))
+                {
+                    g.FillPath(trackBrush, trackPath);
+                }
+                if (unlockedCount > 0)
+                {
+                    RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(5f, track.Width * unlockedCount / totalCount), track.Height);
+                    using (System.Drawing.Drawing2D.GraphicsPath fillPath = Theme.RoundedRect(fillRect, 2.5f))
+                    using (SolidBrush fillBrush = new SolidBrush(progressColor))
+                    {
+                        g.FillPath(fillBrush, fillPath);
+                    }
+                }
+            }
+            else
+            {
+                Theme.DrawText(g, game.Name, Theme.BodyStrong, Theme.Text, new Rectangle(r.X + 114, r.Y + 10, textWidth, 22));
+                Theme.DrawText(g, "App ID " + game.AppId, Theme.Small, Theme.Muted, new Rectangle(r.X + 114, r.Y + 32, textWidth, 18));
+            }
         }
 
         private void RefreshGameListUI(string? selectAppId = null)
