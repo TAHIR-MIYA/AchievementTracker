@@ -88,6 +88,8 @@ namespace AchievementTracker
 
         // Settings page
         private ModernTextBox apiInput = null!;
+        private ToggleSwitch startupToggle = null!;
+        private bool updatingStartupToggle;
 
         public MainWindow()
         {
@@ -1197,13 +1199,16 @@ namespace AchievementTracker
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            TableLayoutPanel right = NewTable(1, 3);
+            TableLayoutPanel right = NewTable(1, 5);
             right.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 140));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
             right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             right.Controls.Add(BuildApiCard(), 0, 0);
-            right.Controls.Add(BuildObsStepsCard(), 0, 2);
+            right.Controls.Add(BuildGeneralCard(), 0, 2);
+            right.Controls.Add(BuildObsStepsCard(), 0, 4);
 
             layout.Controls.Add(BuildPopupsCard(), 0, 0);
             layout.Controls.Add(right, 2, 0);
@@ -1380,6 +1385,65 @@ namespace AchievementTracker
             return card;
         }
 
+        private CardPanel BuildGeneralCard()
+        {
+            CardPanel card = NewCard();
+
+            Label title = MakeLabel("General", Theme.Heading, Theme.Text, Theme.Surface);
+            Label label = MakeLabel("Start with Windows", Theme.Body, Theme.Text, Theme.Surface);
+            Label hint = MakeLabel("Runs in the tray at login so no unlock is missed", Theme.Small, Theme.Muted, Theme.Surface);
+
+            startupToggle = new ToggleSwitch { Checked = StartupManager.IsEnabled() };
+            startupToggle.CheckedChanged += (s, e) =>
+            {
+                if (updatingStartupToggle) return;
+                bool wanted = startupToggle.Checked;
+                if (!StartupManager.SetEnabled(wanted, out string error))
+                {
+                    MessageBox.Show(error, "Start with Windows", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    updatingStartupToggle = true;
+                    startupToggle.Checked = !wanted;
+                    updatingStartupToggle = false;
+                }
+            };
+
+            card.Controls.Add(title);
+            card.Controls.Add(label);
+            card.Controls.Add(hint);
+            card.Controls.Add(startupToggle);
+            card.Resize += (s, e) =>
+            {
+                title.Location = new Point(20, 16);
+                label.Location = new Point(20, 48);
+                hint.Location = new Point(20, 70);
+                startupToggle.Location = new Point(card.Width - 20 - startupToggle.Width, 50);
+            };
+            return card;
+        }
+
+        // The tray menu can change this too, so re-read it whenever the window is shown.
+        private void RefreshStartupToggle()
+        {
+            updatingStartupToggle = true;
+            startupToggle.Checked = StartupManager.IsEnabled();
+            updatingStartupToggle = false;
+        }
+
+        public void ShowActivityPage() => ShowPage(1);
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (!Visible) return;
+            try
+            {
+                RefreshStartupToggle();
+                RefreshActivity();       // updates that arrived while the window was hidden
+                RefreshBackupStatus();
+            }
+            catch { }
+        }
+
         private CardPanel BuildObsStepsCard()
         {
             CardPanel card = NewCard();
@@ -1389,11 +1453,11 @@ namespace AchievementTracker
             {
                 Text = "1. Press Copy OBS URL in the Popups card.\n" +
                        "2. In OBS, add a Browser source and paste the URL.\n" +
-                       "3. Set its width and height to your canvas, for example 1920 x 1080.\n" +
+                       "3. Set its size to your canvas, for example 1920 x 1080.\n" +
                        "4. Drag the source above your Game Capture.\n\n" +
-                       "No desktop audio in your recording? Add ?sound=1 to the end of the URL.\n\n" +
-                       "Popups only appear over the game in Borderless or Windowed mode.",
-                Font = Theme.Body,
+                       "Add ?sound=1 to the URL if your recording has no desktop audio.\n" +
+                       "Popups only show over a game in Borderless or Windowed mode.",
+                Font = Theme.Small,
                 ForeColor = Theme.TextDim,
                 BackColor = Theme.Surface,
                 TextAlign = ContentAlignment.TopLeft

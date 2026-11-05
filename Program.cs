@@ -52,8 +52,12 @@ namespace AchievementTracker
                 UpdateWatchers(dashboard.GetTrackedGames());
 
                 TriggerDataDownload(dashboard.GetTrackedGames(), dashboard.SavedApiKey);
+                StartupManager.RefreshPathIfEnabled();
 
-                Application.Run(dashboard);
+                // Started at login (--minimized): stay in the tray and show the window only when asked.
+                bool startHidden = args.Any(arg => string.Equals(arg, "--minimized", StringComparison.OrdinalIgnoreCase));
+                if (startHidden) Application.Run(new ApplicationContext());
+                else Application.Run(dashboard);
             }
             catch (Exception ex)
             {
@@ -71,16 +75,42 @@ namespace AchievementTracker
                 Text = "Universal Achievement Tracker"
             };
 
-            trayIcon.DoubleClick += (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } };
+            trayIcon.DoubleClick += (s, e) => ShowDashboard();
 
-            trayIcon.ContextMenuStrip.Items.Add("Open Dashboard", null, (s, e) => { if (dashboard != null) { dashboard.Show(); dashboard.WindowState = FormWindowState.Normal; } });
-            trayIcon.ContextMenuStrip.Items.Add("-"); 
+            ToolStripMenuItem startItem = new ToolStripMenuItem("Start with Windows") { CheckOnClick = true, Checked = StartupManager.IsEnabled() };
+            startItem.Click += (s, e) =>
+            {
+                bool wanted = startItem.Checked;   // CheckOnClick has already flipped it
+                if (!StartupManager.SetEnabled(wanted, out string error))
+                {
+                    startItem.Checked = !wanted;
+                    MessageBox.Show(error, "Start with Windows", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
+            trayIcon.ContextMenuStrip.Opening += (s, e) => startItem.Checked = StartupManager.IsEnabled();
+
+            trayIcon.ContextMenuStrip.Items.Add("Open Dashboard", null, (s, e) => ShowDashboard());
+            trayIcon.ContextMenuStrip.Items.Add("Open Activity", null, (s, e) => ShowDashboard(true));
+            trayIcon.ContextMenuStrip.Items.Add("Test popup", null, (s, e) => ShowTestPopup());
+            trayIcon.ContextMenuStrip.Items.Add("-");
+            trayIcon.ContextMenuStrip.Items.Add(startItem);
+            trayIcon.ContextMenuStrip.Items.Add("-");
             trayIcon.ContextMenuStrip.Items.Add("Exit Tracker", null, (s, e) =>
             {
                 if (trayIcon != null) trayIcon.Visible = false;
                 OverlayServer.Stop();
-                Environment.Exit(0); 
+                Environment.Exit(0);
             });
+        }
+
+        // Brings the window to the front (it may be hidden in the tray, or was never shown when started at login).
+        public static void ShowDashboard(bool activityPage = false)
+        {
+            if (dashboard == null) return;
+            dashboard.Show();
+            dashboard.WindowState = FormWindowState.Normal;
+            dashboard.Activate();
+            if (activityPage) dashboard.ShowActivityPage();
         }
 
         public static void UpdateWatchers(List<TrackedGame> games)
