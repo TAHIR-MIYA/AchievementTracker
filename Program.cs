@@ -15,8 +15,11 @@ namespace AchievementTracker
         static string dictionaryPath = AppPaths.InBase("achievement_dictionary.json");
         static string iconsPath = AppPaths.InBase("achievement_icons.json");
         
-        static Dictionary<string, string> achievementNames = new Dictionary<string, string>();
-        static Dictionary<string, string> achievementIcons = new Dictionary<string, string>();
+        // These are written by the Steam download task and read by the UI thread while painting,
+        // so they have to be concurrent (a plain Dictionary throws "Collection was modified"
+        // the moment a paint happens while a download finishes).
+        static ConcurrentDictionary<string, string> achievementNames = new ConcurrentDictionary<string, string>();
+        static ConcurrentDictionary<string, string> achievementIcons = new ConcurrentDictionary<string, string>();
         // ---- PROGRESS: how many of a game's achievements are unlocked (shown in the Library) ----
         public static event EventHandler? ProgressChanged;
         static readonly ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)> progressCache = new ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)>();
@@ -442,15 +445,23 @@ namespace AchievementTracker
             if (File.Exists(dictionaryPath)) {
                 try {
                     string json = File.ReadAllText(dictionaryPath);
-                    if (!string.IsNullOrWhiteSpace(json)) achievementNames = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
-                } catch { achievementNames = new Dictionary<string, string>(); }
+                    if (!string.IsNullOrWhiteSpace(json))
+                    {
+                        var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                        if (dict != null) foreach (var kvp in dict) achievementNames[kvp.Key] = kvp.Value;
+                    }
+                } catch { }
             }
-            
+
             if (File.Exists(iconsPath)) {
                 try {
                     string json = File.ReadAllText(iconsPath);
-                    if (!string.IsNullOrWhiteSpace(json)) achievementIcons = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
-                } catch { achievementIcons = new Dictionary<string, string>(); }
+                    if (!string.IsNullOrWhiteSpace(json))
+                    {
+                        var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                        if (dict != null) foreach (var kvp in dict) achievementIcons[kvp.Key] = kvp.Value;
+                    }
+                } catch { }
             }
 
             if (File.Exists(rarityPath))
