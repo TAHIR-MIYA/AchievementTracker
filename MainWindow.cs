@@ -571,38 +571,30 @@ namespace AchievementTracker
 
         private void UpdateSavesStatus(TrackedGame game)
         {
-            // Move file system check off UI thread
-            Task.Run(() =>
-            {
-                List<string> found = SaveLocator.ExistingPaths(game);
-                SaveInfo? info = SaveLocator.Get(game.AppId);
+            List<string> found = SaveLocator.ExistingPaths(game);
+            SaveInfo? info = SaveLocator.Get(game.AppId);
 
-                if (IsDisposed) return;
-                BeginInvoke(new Action(() =>
-                {
-                    if (found.Count > 0)
-                    {
-                        savesStatus.Text = (found.Count == 1 ? "1 save location found: " : found.Count + " save locations found: ") + found[0];
-                        savesStatus.ForeColor = Theme.TextDim;
-                    }
-                    else if (info == null)
-                    {
-                        savesStatus.Text = "Not looked up yet. Press Find saves.";
-                        savesStatus.ForeColor = Theme.Muted;
-                    }
-                    else if (info.Patterns.Count == 0)
-                    {
-                        savesStatus.Text = "No known save location for this game. Use Add folder.";
-                        savesStatus.ForeColor = Theme.Muted;
-                    }
-                    else
-                    {
-                        savesStatus.Text = "Known location isn't on this PC yet. Play the game once, or use Add folder.";
-                        savesStatus.ForeColor = Theme.Muted;
-                    }
-                    clearFoldersButton.Visible = game.SavePaths.Count > 0;
-                }));
-            });
+            if (found.Count > 0)
+            {
+                savesStatus.Text = (found.Count == 1 ? "1 save location found: " : found.Count + " save locations found: ") + found[0];
+                savesStatus.ForeColor = Theme.TextDim;
+            }
+            else if (info == null)
+            {
+                savesStatus.Text = "Not looked up yet. Press Find saves.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            else if (info.Patterns.Count == 0)
+            {
+                savesStatus.Text = "No known save location for this game. Use Add folder.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            else
+            {
+                savesStatus.Text = "Known location isn't on this PC yet. Play the game once, or use Add folder.";
+                savesStatus.ForeColor = Theme.Muted;
+            }
+            clearFoldersButton.Visible = game.SavePaths.Count > 0;
         }
 
         // Where the game is installed: the folder inside ...\steamapps\common if there is one, else the exe's folder.
@@ -881,7 +873,7 @@ namespace AchievementTracker
             tileStreak = new StatTile { Caption = "Daily streak" };
 
             FlatButton exportButton = new FlatButton { Text = "Export CSV", Kind = ButtonKind.Secondary, Height = 34 };
-            exportButton.Click += async (s, e) =>
+            exportButton.Click += (s, e) =>
             {
                 List<UnlockEntry> entries = UnlockHistory.Snapshot();
                 if (entries.Count == 0) { FlashText(exportButton, "Nothing yet"); return; }
@@ -896,7 +888,7 @@ namespace AchievementTracker
 
                     try
                     {
-                        await Task.Run(() => HistoryExport.WriteCsv(entries, dialog.FileName));
+                        HistoryExport.WriteCsv(entries, dialog.FileName);
                         FlashText(exportButton, "Saved");
                     }
                     catch (Exception ex)
@@ -1555,7 +1547,6 @@ namespace AchievementTracker
 
         private void LoadGames()
         {
-            string gamesFilePath = AppPaths.InBase("tracked_games.json");
             if (File.Exists(gamesFilePath))
             {
                 try
@@ -1581,25 +1572,7 @@ namespace AchievementTracker
             }
         }
 
-        private void SaveGames()
-        {
-            // Write to a temp file first, then replace to avoid data corruption if the write fails halfway
-            string tempPath = AppPaths.InBase("tracked_games.json.tmp");
-            string finalPath = AppPaths.InBase("tracked_games.json");
-            string json = JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true });
-
-            try
-            {
-                File.WriteAllText(tempPath, json);
-                File.Move(tempPath, finalPath, overwrite: true);
-            }
-            catch
-            {
-                // If moving failed, clean up the temp file
-                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                throw;
-            }
-        }
+        private void SaveGames() => File.WriteAllText(gamesFilePath, JsonSerializer.Serialize(games, new JsonSerializerOptions { WriteIndented = true }));
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {

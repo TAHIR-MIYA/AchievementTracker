@@ -970,64 +970,337 @@ namespace AchievementTracker
         }
     }
 
-    /// <summary>
-    /// Owner-drawn list box with real double buffering (the stock ListBox flickers) and hover tracking.
-    /// Subscribe to DrawItem to paint each row.
-    /// </summary>
-    public class RowListBox : ListBox
+    /// <summary>The rows of a RowListBox. Add, Clear, Count and the indexer work like a normal list box.</summary>
+    public class RowListItems : System.Collections.IEnumerable
     {
-        public int HoverIndex { get; private set; } = -1;
+        private readonly List<object> _items = new List<object>();
+        private readonly RowListBox _owner;
+
+        public RowListItems(RowListBox owner) { _owner = owner; }
+
+        public int Count => _items.Count;
+        public object this[int index] => _items[index];
+
+        public void Add(object item)
+        {
+            _items.Add(item);
+            _owner.ItemsChanged();
+        }
+
+        public void Clear()
+        {
+            _items.Clear();
+            _owner.ItemsCleared();
+        }
+
+        public System.Collections.IEnumerator GetEnumerator() => _items.GetEnumerator();
+    }
+
+    /// <summary>
+    /// A scrolling list of custom-drawn rows. It does ALL of its own painting and scrolling (no native list box
+    /// underneath), so rows can never be drawn twice or get stuck half-scrolled. Subscribe to DrawItem to paint a row.
+    /// </summary>
+    public class RowListBox : Control
+    {
+        private const int ScrollBarWidth = 14;
+
+        private readonly RowListItems _items;
+        private int _itemHeight = 64;
+        private int _selected = -1;
+        private int _hover = -1;
+        private int _scroll;                 // how many pixels the list is scrolled down
+        private int _updating;
+        private bool _thumbHover;
+        private bool _dragging;
+        private int _dragOffset;
+
+        public event EventHandler? SelectedIndexChanged;
+        public event DrawItemEventHandler? DrawItem;
 
         public RowListBox()
         {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            DrawMode = DrawMode.OwnerDrawFixed;
-            BorderStyle = BorderStyle.None;
-            IntegralHeight = false;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
+            _items = new RowListItems(this);
             BackColor = Theme.Surface;
             ForeColor = Theme.Text;
-            Theme.DarkScrollbars(this);
+            TabStop = true;
         }
+
+        public RowListItems Items => _items;
+        public int HoverIndex => _hover;
+
+        public int ItemHeight
+        {
+            get => _itemHeight;
+            set { _itemHeight = Math.Max(8, value); ClampScroll(); Invalidate(); }
+        }
+
+        public int SelectedIndex
+        {
+            get => _selected;
+            set
+            {
+                value = Math.Max(-1, Math.Min(_items.Count - 1, value));
+                if (value == _selected) return;
+                _selected = value;
+                if (_selected >= 0) EnsureVisible(_selected);
+                Invalidate();
+                SelectedIndexChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public object? SelectedItem => _selected >= 0 && _selected < _items.Count ? _items[_selected] : null;
+
+        public void BeginUpdate() { _updating++; }
+
+        public void EndUpdate()
+        {
+            if (_updating > 0) _updating--;
+            if (_updating == 0) { ClampScroll(); Invalidate(); }
+        }
+
+        /// <summary>The row under a point (in this control's coordinates), or -1.</summary>
+        public int IndexFromPoint(Point point)
+        {
+            if (point.X < 0 || point.X >= Width || point.Y < 0 || point.Y >= Height) return -1;
+            int index = (point.Y + _scroll) / _itemHeight;
+            return index >= 0 && index < _items.Count ? index : -1;
+        }
+
+        internal void ItemsChanged()
+        {
+            ClampScroll();
+            if (_updating == 0) Invalidate();
+        }
+
+        internal void ItemsCleared()
+        {
+            _scroll = 0;
+            _hover = -1;
+            if (_selected != -1)
+            {
+                _selected = -1;
+                SelectedIndexChanged?.Invoke(this, EventArgs.Empty);
+            }
+            if (_updating == 0) Invalidate();
+        }
+
+        protected virtual void OnDrawItem(DrawItemEventArgs e) => DrawItem?.Invoke(this, e);
+
+        // ---------------------------------------------------------------- scrolling maths
+
+        private int TotalHeight => _items.Count * _itemHeight;
+        private int MaxScroll => Math.Max(0, TotalHeight - Height);
+        private bool NeedsScrollBar => TotalHeight > Height;
+
+        private void ClampScroll()
+        {
+            _scroll = Math.Max(0, Math.Min(MaxScroll, _scroll));
+        }
+
+        private void ScrollBy(int pixels)
+        {
+            int before = _scroll;
+            _scroll = Math.Max(0, Math.Min(MaxScroll, _scroll + pixels));
+            if (_scroll != before)
+            {
+                _hover = IndexFromPoint(PointToClient(Cursor.Position));
+                Invalidate();
+            }
+        }
+
+        private void EnsureVisible(int index)
+        {
+            int top = index * _itemHeight;
+            if (top < _scroll) _scroll = top;
+            else if (top + _itemHeight > _scroll + Height) _scroll = top + _itemHeight - Height;
+            ClampScroll();
+        }
+
+        // The slim scrollbar on the right: where its thumb is
+        private Rectangle ThumbRectangle()
+        {
+            int trackTop = 4;
+            int trackHeight = Math.Max(1, Height - 8);
+            int thumbHeight = Math.Max(28, (int)((long)trackHeight * Height / Math.Max(1, TotalHeight)));
+            int travel = Math.Max(1, trackHeight - thumbHeight);
+            int thumbTop = trackTop + (MaxScroll == 0 ? 0 : (int)((long)travel * _scroll / MaxScroll));
+            return new Rectangle(Width - ScrollBarWidth, thumbTop, ScrollBarWidth, thumbHeight);
+        }
+
+        // ---------------------------------------------------------------- painting
 
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
             g.Clear(BackColor);
             Theme.Smooth(g);
-            for (int i = TopIndex; i < Items.Count; i++)
+
+            int contentWidth = Width - (NeedsScrollBar ? ScrollBarWidth : 0);
+            if (_items.Count > 0)
             {
-                Rectangle r = GetItemRectangle(i);
-                if (r.Top >= Height) break;
-                DrawItemState state = SelectedIndices.Contains(i) ? DrawItemState.Selected : DrawItemState.None;
-                OnDrawItem(new DrawItemEventArgs(g, Font, r, i, state, ForeColor, BackColor));
+                int first = Math.Max(0, _scroll / _itemHeight);
+                int last = Math.Min(_items.Count - 1, (_scroll + Height) / _itemHeight);
+                for (int i = first; i <= last; i++)
+                {
+                    Rectangle row = new Rectangle(0, i * _itemHeight - _scroll, contentWidth, _itemHeight);
+                    DrawItemState state = i == _selected ? DrawItemState.Selected : DrawItemState.None;
+
+                    // each row may only paint inside its own rectangle
+                    GraphicsState saved = g.Save();
+                    g.SetClip(row, CombineMode.Intersect);
+                    OnDrawItem(new DrawItemEventArgs(g, Font, row, i, state, ForeColor, BackColor));
+                    g.Restore(saved);
+                }
+            }
+
+            if (NeedsScrollBar)
+            {
+                Rectangle thumb = ThumbRectangle();
+                RectangleF pill = new RectangleF(thumb.X + 4, thumb.Y, 6, thumb.Height);
+                Color color = _dragging || _thumbHover ? Theme.Muted : Theme.Border;
+                using (GraphicsPath path = Theme.RoundedRect(pill, 3f))
+                using (SolidBrush brush = new SolidBrush(color))
+                {
+                    g.FillPath(brush, path);
+                }
             }
         }
 
+        // ---------------------------------------------------------------- mouse and keyboard
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
-            int idx = IndexFromPoint(e.Location);
-            if (idx != HoverIndex) { HoverIndex = idx; Invalidate(); }
+            if (_dragging)
+            {
+                int trackHeight = Math.Max(1, Height - 8);
+                int thumbHeight = ThumbRectangle().Height;
+                int travel = Math.Max(1, trackHeight - thumbHeight);
+                int thumbTop = Math.Max(4, Math.Min(4 + travel, e.Y - _dragOffset));
+                _scroll = (int)((long)MaxScroll * (thumbTop - 4) / travel);
+                ClampScroll();
+                Invalidate();
+            }
+            else
+            {
+                bool overThumb = NeedsScrollBar && ThumbRectangle().Contains(e.Location);
+                int index = e.X >= Width - ScrollBarWidth && NeedsScrollBar ? -1 : IndexFromPoint(e.Location);
+                if (index != _hover || overThumb != _thumbHover)
+                {
+                    _hover = index;
+                    _thumbHover = overThumb;
+                    Invalidate();
+                }
+            }
             base.OnMouseMove(e);
+        }
+
+        // The mouse wheel goes to the focused control, so take focus when hovered, unless the user is typing in a text box.
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            Form? form = FindForm();
+            if (form != null && form.ContainsFocus && !Focused && !(form.ActiveControl is TextBox)) Focus();
+            base.OnMouseEnter(e);
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
-            if (HoverIndex != -1) { HoverIndex = -1; Invalidate(); }
+            if (_hover != -1 || _thumbHover)
+            {
+                _hover = -1;
+                _thumbHover = false;
+                Invalidate();
+            }
             base.OnMouseLeave(e);
         }
 
-        protected override void OnSelectedIndexChanged(EventArgs e)
+        protected override void OnMouseDown(MouseEventArgs e)
         {
-            Invalidate();
-            base.OnSelectedIndexChanged(e);
+            if (e.Button == MouseButtons.Left)
+            {
+                if (NeedsScrollBar && e.X >= Width - ScrollBarWidth)
+                {
+                    Rectangle thumb = ThumbRectangle();
+                    if (thumb.Contains(e.Location))
+                    {
+                        _dragging = true;
+                        _dragOffset = e.Y - thumb.Y;
+                        Capture = true;
+                    }
+                    else
+                    {
+                        ScrollBy(e.Y < thumb.Y ? -Height : Height);   // click in the track: one page
+                    }
+                }
+                else
+                {
+                    int index = IndexFromPoint(e.Location);
+                    if (index >= 0) SelectedIndex = index;
+                }
+            }
+            base.OnMouseDown(e);
         }
 
-        protected override void WndProc(ref Message m)
+        protected override void OnMouseUp(MouseEventArgs e)
         {
-            base.WndProc(ref m);
-            const int WM_VSCROLL = 0x0115;
-            const int WM_MOUSEWHEEL = 0x020A;
-            if (m.Msg == WM_VSCROLL || m.Msg == WM_MOUSEWHEEL) Invalidate();
+            if (_dragging)
+            {
+                _dragging = false;
+                Capture = false;
+                Invalidate();
+            }
+            base.OnMouseUp(e);
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            ScrollBy(-(int)(e.Delta / 120.0 * _itemHeight * 1.5));
+            if (e is HandledMouseEventArgs handled) handled.Handled = true;
+            base.OnMouseWheel(e);
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            ClampScroll();
+            base.OnResize(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            switch (keyData)
+            {
+                case Keys.Up:
+                case Keys.Down:
+                case Keys.PageUp:
+                case Keys.PageDown:
+                case Keys.Home:
+                case Keys.End:
+                    return true;
+            }
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (_items.Count > 0)
+            {
+                int page = Math.Max(1, Height / _itemHeight);
+                int target = _selected;
+                switch (e.KeyCode)
+                {
+                    case Keys.Up: target = _selected < 0 ? 0 : _selected - 1; break;
+                    case Keys.Down: target = _selected + 1; break;
+                    case Keys.PageUp: target = _selected - page; break;
+                    case Keys.PageDown: target = _selected + page; break;
+                    case Keys.Home: target = 0; break;
+                    case Keys.End: target = _items.Count - 1; break;
+                    default: base.OnKeyDown(e); return;
+                }
+                SelectedIndex = Math.Max(0, Math.Min(_items.Count - 1, target));
+                e.Handled = true;
+            }
+            base.OnKeyDown(e);
         }
     }
 }
