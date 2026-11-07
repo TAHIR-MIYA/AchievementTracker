@@ -69,6 +69,9 @@ namespace AchievementTracker
         static ConcurrentDictionary<string, bool> previousState = new ConcurrentDictionary<string, bool>();   // watchers run on several threads
 
         static NotifyIcon? trayIcon;
+        static Mutex? instanceMutex;            // held for the whole life of the app: only one copy may run
+        static EventWaitHandle? showRequest;    // a second start sets this to ask the running copy to show its window
+        static Control? uiMarshal;              // lets the listener thread reach the UI thread
         static MainWindow? dashboard;
         static List<FileSystemWatcher> activeWatchers = new List<FileSystemWatcher>();
         static readonly HttpClient httpClient = new HttpClient();
@@ -78,8 +81,30 @@ namespace AchievementTracker
         {
             try
             {
+                // Only one copy at a time (it lives in the tray, so a second start would double every popup).
+                instanceMutex = new Mutex(true, @"Local\AchievementTracker.SingleInstance", out bool firstInstance);
+                showRequest = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\AchievementTracker.ShowWindow");
+                if (!firstInstance)
+                {
+                    showRequest.Set();   // ask the copy that is already running to show its window, then quit
+                    return;
+                }
+
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+
+                uiMarshal = new Control();
+                _ = uiMarshal.Handle;    // create the handle now, so other threads can use BeginInvoke later
+                Thread showListener = new Thread(() =>
+                {
+                    while (true)
+                    {
+                        showRequest.WaitOne();
+                        try { uiMarshal.BeginInvoke(new Action(() => ShowDashboard())); } catch { }
+                    }
+                })
+                { IsBackground = true, Name = "ShowWindowListener" };
+                showListener.Start();
 
                 SetupSystemTray();
                 LoadTranslator();

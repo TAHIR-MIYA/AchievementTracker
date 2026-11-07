@@ -1,0 +1,14 @@
+Achievement Tracker is installed. Here is how to get going:
+
+1. Open the app and go to Settings. Paste your Steam Web API key.
+   You can get one for free at https://steamcommunity.com/dev/apikey
+   (it is used to load achievement names and icons).
+
+2. Go to the Library tab and add your games. Type a Steam App ID and the
+   name and cover fill in by themselves, or use "Detect from .exe".
+
+3. Play. Popups appear when you unlock something.
+   For recording, add the OBS Browser Source: Settings, "Copy OBS URL".
+
+The tracker runs quietly in the system tray (near the clock).
+Right-click its icon for quick actions, or double-click it to open the window.

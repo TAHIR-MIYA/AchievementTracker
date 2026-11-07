@@ -112,6 +112,12 @@ Open **Settings** in the app to use the **Test popup** button, switch the **Desk
 
 ---
 
+## 📦 Installer
+
+To give the app to friends as a single setup file, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1` (needs the free Inno Setup, see `installer\INSTALLER.md`). The result, `installer\Output\AchievementTracker-Setup-1.0.0.exe`, installs for the current user without an administrator prompt, includes the .NET runtime, adds Start menu and optional desktop shortcuts, can start with Windows, and updates cleanly over an older version. Only one copy of the app runs at a time: starting it again just shows the window of the copy that is already in the tray.
+
+---
+
 ## 💻 Developer Guide: Building from Source
 
 If you wish to fork this repository and compile the binary yourself, follow these steps:

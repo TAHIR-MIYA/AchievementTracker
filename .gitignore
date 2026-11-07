@@ -13,3 +13,7 @@ Thumbs.db
 
 # Secrets / local settings (Steam API key)
 app_settings.json
+
+# Installer build output
+installer/publish/
+installer/Output/
