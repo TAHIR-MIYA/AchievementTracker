@@ -127,7 +127,7 @@ If you wish to fork this repository and compile the binary yourself, follow thes
 * [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
 
 **Build Instructions:**
-1. Clone the repository: `git clone https://github.com/TAHIRDON/AchievementTracker.git`
+1. Clone the repository: `git clone https://github.com/TAHIR-MIYA/AchievementTracker.git`
 2. Open the directory in VS Code.
 3. Open a new Terminal (`Ctrl + ~`).
 4. Run the production build command to bundle the runtime and trim dependencies:
