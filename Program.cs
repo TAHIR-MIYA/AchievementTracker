@@ -724,6 +724,7 @@ namespace AchievementTracker
 
         static void ShowPopup(PopupData data)
         {
+            data.Icon = SteamStore.GetCommunityAssetUrl(data.Icon) ?? data.Icon;
             AppSettings settings = AppSettings.Current;
             if (settings.ObsOverlay) OverlayServer.Broadcast(data);   // browser source (OBS)
             if (settings.DesktopPopup) popupQueue.Add(data);          // on-screen popup

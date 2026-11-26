@@ -532,7 +532,7 @@ namespace AchievementTracker
             }
             catch (Exception ex)
             {
-                string? communityAssetUrl = GetCommunityAssetUrl(url);
+                string? communityAssetUrl = SteamStore.GetCommunityAssetUrl(url);
                 if (!string.IsNullOrWhiteSpace(communityAssetUrl))
                 {
                     await LoadIconAsync(communityAssetUrl, row, fallbackUrl);
@@ -551,17 +551,6 @@ namespace AchievementTracker
                     System.Diagnostics.Debug.WriteLine($"Failed to load icon from {url}: {ex.Message}");
                 CreatePlaceholderIcon(row);
             }
-        }
-
-        private static string? GetCommunityAssetUrl(string url)
-        {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return null;
-
-            const string legacyPath = "/steamcommunity/public/images/apps/";
-            if (!uri.AbsolutePath.StartsWith(legacyPath, StringComparison.OrdinalIgnoreCase)) return null;
-
-            string assetPath = uri.AbsolutePath.Substring(legacyPath.Length);
-            return "https://shared.fastly.steamstatic.com/community_assets/images/apps/" + assetPath;
         }
 
         private void CreatePlaceholderIcon(AchievementRow row)

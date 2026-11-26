@@ -36,6 +36,17 @@ namespace AchievementTracker
             return File.Exists(file) ? file : null;
         }
 
+        public static string? GetCommunityAssetUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return null;
+
+            const string legacyPath = "/steamcommunity/public/images/apps/";
+            if (!uri.AbsolutePath.StartsWith(legacyPath, StringComparison.OrdinalIgnoreCase)) return null;
+
+            string assetPath = uri.AbsolutePath.Substring(legacyPath.Length);
+            return "https://shared.fastly.steamstatic.com/community_assets/images/apps/" + assetPath;
+        }
+
         public static async Task<LookupResult> LookupAsync(string appId)
         {
             try
