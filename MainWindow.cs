@@ -1535,6 +1535,7 @@ namespace AchievementTracker
             AppSettings.Current.SteamApiKey = SavedApiKey;
             AppSettings.Save();
             Program.TriggerDataDownload(games, SavedApiKey);
+            LoadSettings(); // Reload in case of external changes
             if (button != null) FlashText(button, "Saved");
         }
 

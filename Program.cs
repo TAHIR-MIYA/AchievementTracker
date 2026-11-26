@@ -14,9 +14,37 @@ namespace AchievementTracker
     {
         static string dictionaryPath = AppPaths.InBase("achievement_dictionary.json");
         static string iconsPath = AppPaths.InBase("achievement_icons.json");
-        
-        static ConcurrentDictionary<string, string> achievementNames = new ConcurrentDictionary<string, string>();
-        static ConcurrentDictionary<string, string> achievementIcons = new ConcurrentDictionary<string, string>();
+
+        public static ConcurrentDictionary<string, string> achievementNames = new ConcurrentDictionary<string, string>();
+        public static ConcurrentDictionary<string, string> achievementIcons = new ConcurrentDictionary<string, string>();
+
+        public static Dictionary<string, string> GetAchievementNamesForGame(string appId)
+        {
+            string prefix = appId + "_";
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in achievementNames)
+            {
+                if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    result[kvp.Key] = kvp.Value;
+                }
+            }
+            return result;
+        }
+
+        public static Dictionary<string, string> GetAchievementIconsForGame(string appId)
+        {
+            string prefix = appId + "_";
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in achievementIcons)
+            {
+                if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    result[kvp.Key] = kvp.Value;
+                }
+            }
+            return result;
+        }
         // ---- PROGRESS: how many of a game's achievements are unlocked (shown in the Library) ----
         public static event EventHandler? ProgressChanged;
         static readonly ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)> progressCache = new ConcurrentDictionary<string, (int Unlocked, int Total, long Tick)>();
@@ -196,44 +224,61 @@ namespace AchievementTracker
 
                 try
                 {
-                // 1. WATCH GOLDBERG
-                string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
-                Directory.CreateDirectory(goldbergDir); 
-                LoadBaselineState(appId, Path.Combine(goldbergDir, "achievements.json"));
-                AttachWatcher(goldbergDir, "*.json", (s, e) => OnAchievementFileChanged(s, e, appId));
+                    // 1. WATCH GOLDBERG (standard location)
+                    string goldbergDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
+                    Directory.CreateDirectory(goldbergDir);
+                    LoadBaselineState(appId, Path.Combine(goldbergDir, "achievements.json"));
+                    AttachWatcher(goldbergDir, "*.json", (s, e) => OnAchievementFileChanged(s, e, appId));
 
-                // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
-                string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
-                
-                foreach (string emu in emuFolders)
-                {
-                    string emuDir = Path.Combine(publicDocs, "Documents", emu, appId);
-                    Directory.CreateDirectory(emuDir);
+                    // 1b. WATCH GSE SAVES (alternate location with numeric subfolders)
+                    string gseBaseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+                    if (Directory.Exists(gseBaseDir))
+                    {
+                        foreach (string dir in Directory.GetDirectories(gseBaseDir))
+                        {
+                            string file = Path.Combine(dir, "achievements.json");
+                            if (File.Exists(file))
+                            {
+                                LoadBaselineState(appId, file);
+                                AttachWatcher(dir, "achievements.json", (s, e) => OnAchievementFileChanged(s, e, appId));
+                            }
+                        }
+                    }
 
-                    // Pre-scan directories to set baseline
-                    string iniPath = Path.Combine(emuDir, "achievements.ini");
-                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
-                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements"); 
-                    if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "Stats", "Achievements"); 
-                    
-                    ParseIniForBaseline(appId, iniPath);
+                    // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
+                    string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
 
-                    // Watch the whole directory including subfolders to catch everything
-                    AttachWatcher(emuDir, "*.*", (s, e) => {
-                        string lowerName = e.Name?.ToLower() ?? "";
-                        if (lowerName.Contains("achievement") || lowerName.Contains("stats")) 
-                            ParseIniForChanges(appId, e.FullPath);
-                    });
-                }
+                    foreach (string emu in emuFolders)
+                    {
+                        string emuDir = Path.Combine(publicDocs, "Documents", emu, appId);
+                        Directory.CreateDirectory(emuDir);
+
+                        // Pre-scan directories to set baseline
+                        string iniPath = Path.Combine(emuDir, "achievements.ini");
+                        if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "remote", "achievements.ini");
+                        if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "achievements");
+                        if (!File.Exists(iniPath)) iniPath = Path.Combine(emuDir, "Stats", "Achievements");
+
+                        ParseIniForBaseline(appId, iniPath);
+
+                        // Watch the whole directory including subfolders to catch everything
+                        AttachWatcher(emuDir, "*.*", (s, e) => {
+                            string lowerName = e.Name?.ToLower() ?? "";
+                            if (lowerName.Contains("achievement") || lowerName.Contains("stats"))
+                                ParseIniForChanges(appId, e.FullPath);
+                        });
+                    }
                 }
                 catch
                 {
                     // One broken game entry (locked folder, no permission...) must never stop the app from starting.
                 }
             }
+            // After loading all baseline states, notify the UI to refresh progress
+            NotifyProgressChanged();
         }
 
-        static void AttachWatcher(string directory, string filter, FileSystemEventHandler onChanged)
+    static void AttachWatcher(string directory, string filter, FileSystemEventHandler onChanged)
         {
             FileSystemWatcher watcher = new FileSystemWatcher(directory, filter)
             {

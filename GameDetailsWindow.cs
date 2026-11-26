@@ -235,26 +235,23 @@ namespace AchievementTracker
             string appId = game.AppId;
             string publicDocs = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
 
-            // 1. GOLDBERG
+            // 1. GOLDBERG (standard location)
             string goldbergPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId, "achievements.json");
-            if (File.Exists(goldbergPath))
+            ScanGoldbergFile(goldbergPath);
+
+            // 1b. GOLDBERG / GSE Saves (alternate location with numeric folder)
+            string gseSavesPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves", "2766560684", "achievements.json");
+            ScanGoldbergFile(gseSavesPath);
+
+            // Also check for any numeric folder under GSE Saves for this app
+            string gseBaseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+            if (Directory.Exists(gseBaseDir))
             {
-                try {
-                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(goldbergPath));
-                    foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
-                    {
-                        if (prop.Value.ValueKind == JsonValueKind.Object && prop.Value.TryGetProperty("earned", out JsonElement earned) && earned.GetBoolean())
-                        {
-                            unlockedAchievements.Add(prop.Name);
-                            if (prop.Value.TryGetProperty("earned_time", out JsonElement earnedTime) && earnedTime.ValueKind == JsonValueKind.Number &&
-                                earnedTime.TryGetInt64(out long seconds) && seconds > 0)
-                            {
-                                RememberUnlockTime(prop.Name, DateTimeOffset.FromUnixTimeSeconds(seconds).LocalDateTime);
-                            }
-                        }
-                        else if (prop.Value.ValueKind == JsonValueKind.True) unlockedAchievements.Add(prop.Name);
-                    }
-                } catch { }
+                foreach (string dir in Directory.GetDirectories(gseBaseDir))
+                {
+                    string file = Path.Combine(dir, "achievements.json");
+                    if (File.Exists(file)) ScanGoldbergFile(file);
+                }
             }
 
             // 2. CODEX, RUNE, FLT, TENOKE, OnlineFix
@@ -289,6 +286,29 @@ namespace AchievementTracker
         private void RememberUnlockTime(string achievementName, DateTime time)
         {
             if (!unlockTimes.TryGetValue(achievementName, out DateTime existing) || time < existing) unlockTimes[achievementName] = time;
+        }
+
+        private void ScanGoldbergFile(string path)
+        {
+            if (!File.Exists(path)) return;
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+                foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Object && prop.Value.TryGetProperty("earned", out JsonElement earned) && earned.GetBoolean())
+                    {
+                        unlockedAchievements.Add(prop.Name);
+                        if (prop.Value.TryGetProperty("earned_time", out JsonElement earnedTime) && earnedTime.ValueKind == JsonValueKind.Number &&
+                            earnedTime.TryGetInt64(out long seconds) && seconds > 0)
+                        {
+                            RememberUnlockTime(prop.Name, DateTimeOffset.FromUnixTimeSeconds(seconds).LocalDateTime);
+                        }
+                    }
+                    else if (prop.Value.ValueKind == JsonValueKind.True) unlockedAchievements.Add(prop.Name);
+                }
+            }
+            catch { }
         }
 
         private async Task FetchAndPopulateSteamData()
@@ -380,7 +400,76 @@ namespace AchievementTracker
             }
             catch
             {
-                if (!IsDisposed) subtitleLabel.Text = "Couldn't reach Steam. Check your connection and API key.";
+                if (!IsDisposed)
+                {
+                    subtitleLabel.Text = "Couldn't reach Steam. Trying local data...";
+                    // Fallback to local JSON data for icons and names
+                    await FetchFromLocalData();
+                }
+            }
+        }
+
+        private async Task FetchFromLocalData()
+        {
+            try
+            {
+                string prefix = game.AppId + "_";
+                var localNames = Program.achievementNames.Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+                var localIcons = Program.achievementIcons.Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (localNames.Count == 0) return;
+
+                await Program.EnsureRarityAsync(game.AppId);
+
+                int unlockedCount = 0;
+                int totalCount = 0;
+                List<(AchievementRow Row, string IconUrl)> unlocked = new List<(AchievementRow, string)>();
+                List<(AchievementRow Row, string IconUrl)> locked = new List<(AchievementRow, string)>();
+                List<(AchievementRow Row, string IconUrl)> hidden = new List<(AchievementRow, string)>();
+
+                // We don't have descriptions or hidden status from local data, so we'll use minimal info
+                foreach (var kvp in localNames)
+                {
+                    totalCount++;
+                    string internalName = kvp.Key.Substring(prefix.Length);
+                    string displayName = kvp.Value;
+                    string iconUrl = localIcons.FirstOrDefault(i => i.Key == kvp.Key).Value ?? "";
+
+                    bool isUnlocked = unlockedAchievements.Contains(internalName);
+                    if (isUnlocked) unlockedCount++;
+
+                    AchievementRow row = new AchievementRow { Name = displayName, Description = "", Unlocked = isUnlocked, Hidden = false };
+                    if (Program.TryGetRarity(game.AppId, internalName, out double rarityPercent)) row.Percent = rarityPercent;
+                    if (isUnlocked && unlockTimes.TryGetValue(internalName, out DateTime unlockedAt)) row.UnlockedAt = unlockedAt;
+
+                    if (isUnlocked) unlocked.Add((row, iconUrl));
+                    else locked.Add((row, iconUrl));
+                }
+
+                // Unlocked first, then locked
+                List<(AchievementRow Row, string IconUrl)> ordered = unlocked.Concat(locked).ToList();
+
+                allRows = ordered.Select(item => item.Row).ToList();
+                filterPicker.Items = new[]
+                {
+                    "All " + totalCount,
+                    "Unlocked " + unlockedCount,
+                    "Locked " + (totalCount - unlockedCount),
+                    "Recent"
+                };
+                ApplyFilter();
+
+                ring.Value = totalCount == 0 ? 0f : (float)unlockedCount / totalCount;
+                subtitleLabel.Text = unlockedCount + " of " + totalCount + " achievements unlocked (local data)";
+
+                foreach (var item in ordered)
+                {
+                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row);
+                }
+            }
+            catch
+            {
+                if (!IsDisposed) subtitleLabel.Text = "Couldn't load local data either.";
             }
         }
 
