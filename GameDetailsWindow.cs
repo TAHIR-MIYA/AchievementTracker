@@ -19,6 +19,7 @@ namespace AchievementTracker
         public bool Hidden { get; set; }
         public double? Percent { get; set; }   // share of all Steam players who unlocked it
         public DateTime? UnlockedAt { get; set; }
+        public string? FallbackIconUrl { get; set; }
         public Image? Icon { get; set; }
     }
 
@@ -221,12 +222,13 @@ namespace AchievementTracker
 
         private async void LoadAchievementsAsync()
         {
+            ScanLocalEmulatorSaves();
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                subtitleLabel.Text = "Add your Steam API key in Settings to see achievements.";
+                if (!await FetchFromLocalData())
+                    subtitleLabel.Text = "Add your Steam API key in Settings to see achievements.";
                 return;
             }
-            ScanLocalEmulatorSaves();
             await FetchAndPopulateSteamData();
         }
 
@@ -320,6 +322,7 @@ namespace AchievementTracker
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (await FetchFromLocalData()) return;
                     subtitleLabel.Text = "Steam rejected the request. Check your API key and the App ID.";
                     return;
                 }
@@ -331,6 +334,7 @@ namespace AchievementTracker
                       gameElement.TryGetProperty("availableGameStats", out JsonElement statsElement) &&
                       statsElement.TryGetProperty("achievements", out JsonElement achievementsElement)))
                 {
+                    if (await FetchFromLocalData()) return;
                     subtitleLabel.Text = "No achievements found for this App ID.";
                     return;
                 }
@@ -360,6 +364,11 @@ namespace AchievementTracker
                     if (Program.TryGetRarity(game.AppId, internalName, out double rarityPercent)) row.Percent = rarityPercent;
                     if (isUnlocked && unlockTimes.TryGetValue(internalName, out DateTime unlockedAt)) row.UnlockedAt = unlockedAt;
                     string targetIcon = isUnlocked ? iconUrl : iconGrayUrl;
+                    if (Program.achievementIcons.TryGetValue(game.AppId + "_" + internalName, out string? cachedIconUrl))
+                    {
+                        row.FallbackIconUrl = cachedIconUrl;
+                        if (string.IsNullOrWhiteSpace(targetIcon)) targetIcon = cachedIconUrl;
+                    }
 
                     if (isUnlocked) unlocked.Add((row, targetIcon));
                     else if (isHidden) hidden.Add((row, targetIcon));
@@ -395,21 +404,20 @@ namespace AchievementTracker
 
                 foreach (var item in ordered)
                 {
-                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row);
+                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row, item.Row.FallbackIconUrl);
                 }
             }
             catch
             {
                 if (!IsDisposed)
                 {
-                    subtitleLabel.Text = "Couldn't reach Steam. Trying local data...";
-                    // Fallback to local JSON data for icons and names
-                    await FetchFromLocalData();
+                    if (!await FetchFromLocalData())
+                        subtitleLabel.Text = "Couldn't reach Steam, and no local achievement data is available.";
                 }
             }
         }
 
-        private async Task FetchFromLocalData()
+        private async Task<bool> FetchFromLocalData()
         {
             try
             {
@@ -417,7 +425,7 @@ namespace AchievementTracker
                 var localNames = Program.achievementNames.Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
                 var localIcons = Program.achievementIcons.Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
 
-                if (localNames.Count == 0) return;
+                if (localNames.Count == 0) return false;
 
                 await Program.EnsureRarityAsync(game.AppId);
 
@@ -464,12 +472,13 @@ namespace AchievementTracker
 
                 foreach (var item in ordered)
                 {
-                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row);
+                    if (!string.IsNullOrEmpty(item.IconUrl)) _ = LoadIconAsync(item.IconUrl, item.Row, item.Row.FallbackIconUrl);
                 }
+                return true;
             }
             catch
             {
-                if (!IsDisposed) subtitleLabel.Text = "Couldn't load local data either.";
+                return false;
             }
         }
 
@@ -502,7 +511,7 @@ namespace AchievementTracker
             noResults.Visible = allRows.Count > 0 && achievementList.Items.Count == 0;
         }
 
-        private async Task LoadIconAsync(string url, AchievementRow row)
+        private async Task LoadIconAsync(string url, AchievementRow row, string? fallbackUrl = null)
         {
             try
             {
@@ -531,7 +540,111 @@ namespace AchievementTracker
                     previous?.Dispose();
                 }));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                string? communityAssetUrl = GetCommunityAssetUrl(url);
+                if (!string.IsNullOrWhiteSpace(communityAssetUrl))
+                {
+                    await LoadIconAsync(communityAssetUrl, row, fallbackUrl);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(fallbackUrl) &&
+                    !string.Equals(url, fallbackUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    await LoadIconAsync(fallbackUrl, row);
+                    return;
+                }
+
+                if (!(ex is HttpRequestException requestException &&
+                      requestException.StatusCode == System.Net.HttpStatusCode.NotFound))
+                    System.Diagnostics.Debug.WriteLine($"Failed to load icon from {url}: {ex.Message}");
+                CreatePlaceholderIcon(row);
+            }
+        }
+
+        private static string? GetCommunityAssetUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return null;
+
+            const string legacyPath = "/steamcommunity/public/images/apps/";
+            if (!uri.AbsolutePath.StartsWith(legacyPath, StringComparison.OrdinalIgnoreCase)) return null;
+
+            string assetPath = uri.AbsolutePath.Substring(legacyPath.Length);
+            return "https://shared.fastly.steamstatic.com/community_assets/images/apps/" + assetPath;
+        }
+
+        private void CreatePlaceholderIcon(AchievementRow row)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed) return;
+                // Create a visually distinct placeholder based on achievement state
+                var bmp = new Bitmap(52, 52);
+                using (var g = Graphics.FromImage(bmp))
+                using (var path = Theme.RoundedRect(new Rectangle(0, 0, 52, 52), 10f))
+                {
+                    // Background color based on state
+                    Color bgColor;
+                    Color accentColor;
+                    string symbol;
+
+                    if (row.Unlocked)
+                    {
+                        bgColor = Theme.Blend(Theme.Accent, Theme.Base, 0.15f);
+                        accentColor = Theme.Accent;
+                        symbol = "✓";
+                    }
+                    else if (row.Hidden)
+                    {
+                        bgColor = Theme.Blend(Theme.Danger, Theme.Base, 0.15f);
+                        accentColor = Theme.Danger;
+                        symbol = "?";
+                    }
+                    else
+                    {
+                        bgColor = Theme.Raised;
+                        accentColor = Theme.Muted;
+                        symbol = !string.IsNullOrEmpty(row.Name) ? row.Name[0].ToString().ToUpper() : "?";
+                    }
+
+                    using (var bgBrush = new SolidBrush(bgColor))
+                    using (var borderPen = new Pen(Theme.Border, 1.5f))
+                    {
+                        g.FillPath(bgBrush, path);
+                        g.DrawPath(borderPen, path);
+                    }
+
+                    // Draw symbol/letter
+                    using (var brush = new SolidBrush(accentColor))
+                    using (var font = new Font(Theme.BodyStrong.FontFamily, row.Unlocked ? 18f : (row.Hidden ? 16f : 14f), FontStyle.Bold))
+                    {
+                        var size = g.MeasureString(symbol, font);
+                        float x = (52 - size.Width) / 2;
+                        float y = (52 - size.Height) / 2;
+                        g.DrawString(symbol, font, brush, x, y);
+                    }
+
+                    // Add rarity indicator for unlocked achievements
+                    if (row.Unlocked && row.Percent.HasValue && Rarity.IsHighlighted(row.Percent.Value))
+                    {
+                        using (var rareBrush = new SolidBrush(Theme.Accent))
+                        {
+                            g.FillEllipse(rareBrush, 36, 36, 14, 14);
+                            using (var starFont = new Font("Segoe UI Symbol", 9f))
+                            {
+                                g.DrawString("★", starFont, new SolidBrush(Theme.Base), 38, 35);
+                            }
+                        }
+                    }
+                }
+
+                Image? previous = row.Icon;
+                row.Icon = bmp;
+                achievementList.Invalidate();
+                previous?.Dispose();
+            }));
         }
 
         // Icons are released only after the list control itself is gone, so nothing can paint a disposed image.

@@ -239,8 +239,8 @@ namespace AchievementTracker
                             string file = Path.Combine(dir, "achievements.json");
                             if (File.Exists(file))
                             {
-                                LoadBaselineState(appId, file);
-                                AttachWatcher(dir, "achievements.json", (s, e) => OnAchievementFileChanged(s, e, appId));
+                                LoadBaselineState(appId, file, onlyKnownAchievements: true);
+                                AttachWatcher(dir, "achievements.json", (s, e) => OnAchievementFileChanged(s, e, appId, onlyKnownAchievements: true));
                             }
                         }
                     }
@@ -292,6 +292,11 @@ namespace AchievementTracker
 
         static void LoadBaselineState(string appId, string filePath)
         {
+            LoadBaselineState(appId, filePath, onlyKnownAchievements: false);
+        }
+
+        static void LoadBaselineState(string appId, string filePath, bool onlyKnownAchievements)
+        {
             if (!File.Exists(filePath)) return;
             try
             {
@@ -305,7 +310,11 @@ namespace AchievementTracker
                         using JsonDocument doc = JsonDocument.Parse(sr.ReadToEnd());
                         foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                         {
-                            if (ExtractAchievementStatus(prop.Value)) previousState[appId + "_" + prop.Name] = true;
+                            if (ExtractAchievementStatus(prop.Value) &&
+                                (!onlyKnownAchievements || achievementNames.ContainsKey(appId + "_" + prop.Name)))
+                            {
+                                previousState[appId + "_" + prop.Name] = true;
+                            }
                         }
                         break;
                     }
@@ -316,6 +325,11 @@ namespace AchievementTracker
 
         static void OnAchievementFileChanged(object sender, FileSystemEventArgs e, string appId)
         {
+            OnAchievementFileChanged(sender, e, appId, onlyKnownAchievements: false);
+        }
+
+        static void OnAchievementFileChanged(object sender, FileSystemEventArgs e, string appId, bool onlyKnownAchievements)
+        {
             Thread.Sleep(50); 
             try
             {
@@ -325,6 +339,7 @@ namespace AchievementTracker
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
                     string achKey = prop.Name;
+                    if (onlyKnownAchievements && !achievementNames.ContainsKey(appId + "_" + achKey)) continue;
                     bool isEarned = ExtractAchievementStatus(prop.Value);
                     string stateKey = appId + "_" + achKey; 
 
@@ -562,6 +577,7 @@ namespace AchievementTracker
             {
                 if (hasKey)
                 {
+                    foreach (var game in games) LoadGseAchievementBaselines(game.AppId);
                     File.WriteAllText(dictionaryPath, JsonSerializer.Serialize(achievementNames, new JsonSerializerOptions { WriteIndented = true }));
                     File.WriteAllText(iconsPath, JsonSerializer.Serialize(achievementIcons, new JsonSerializerOptions { WriteIndented = true }));
                 }
@@ -569,6 +585,18 @@ namespace AchievementTracker
             }
             catch { }
             NotifyProgressChanged();
+        }
+
+        static void LoadGseAchievementBaselines(string appId)
+        {
+            string gseBaseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+            if (!Directory.Exists(gseBaseDir)) return;
+
+            foreach (string dir in Directory.GetDirectories(gseBaseDir))
+            {
+                string file = Path.Combine(dir, "achievements.json");
+                if (File.Exists(file)) LoadBaselineState(appId, file, onlyKnownAchievements: true);
+            }
         }
 
         // ---- RARITY: share of all Steam players who unlocked each achievement ----
