@@ -241,20 +241,9 @@ namespace AchievementTracker
             string goldbergPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId, "achievements.json");
             ScanGoldbergFile(goldbergPath);
 
-            // 1b. GOLDBERG / GSE Saves (alternate location with numeric folder)
-            string gseSavesPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves", "2766560684", "achievements.json");
-            ScanGoldbergFile(gseSavesPath);
-
-            // Also check for any numeric folder under GSE Saves for this app
-            string gseBaseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
-            if (Directory.Exists(gseBaseDir))
-            {
-                foreach (string dir in Directory.GetDirectories(gseBaseDir))
-                {
-                    string file = Path.Combine(dir, "achievements.json");
-                    if (File.Exists(file)) ScanGoldbergFile(file);
-                }
-            }
+            // GSE stores shared achievement files; include only keys known to this game.
+            foreach (var folder in Program.GetGseAchievementFolders())
+                ScanGoldbergFile(Path.Combine(folder.Dir, "achievements.json"), onlyKnownAchievements: true);
 
             // 2. CODEX, RUNE, FLT, TENOKE, OnlineFix
             string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
@@ -290,7 +279,7 @@ namespace AchievementTracker
             if (!unlockTimes.TryGetValue(achievementName, out DateTime existing) || time < existing) unlockTimes[achievementName] = time;
         }
 
-        private void ScanGoldbergFile(string path)
+        private void ScanGoldbergFile(string path, bool onlyKnownAchievements = false)
         {
             if (!File.Exists(path)) return;
             try
@@ -298,6 +287,7 @@ namespace AchievementTracker
                 using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
                 foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
                 {
+                    if (onlyKnownAchievements && !Program.achievementNames.ContainsKey(game.AppId + "_" + prop.Name)) continue;
                     if (prop.Value.ValueKind == JsonValueKind.Object && prop.Value.TryGetProperty("earned", out JsonElement earned) && earned.GetBoolean())
                     {
                         unlockedAchievements.Add(prop.Name);

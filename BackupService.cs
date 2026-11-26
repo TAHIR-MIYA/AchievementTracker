@@ -12,7 +12,7 @@ namespace AchievementTracker
     // One restorable item inside a backup zip (written to manifest.json)
     public class BackupItem
     {
-        public string Kind { get; set; } = "";        // save, achievement, gamelist, history
+        public string Kind { get; set; } = "";        // save, achievement, gamelist, history, settings
         public string Game { get; set; } = "";
         public string AppId { get; set; } = "";
         public string EntryRoot { get; set; } = "";   // folder (or file) name inside the zip
@@ -123,6 +123,11 @@ namespace AchievementTracker
                     {
                         copy.SteamApiKey = "";
                         AddText(zip, "tracker/settings.json", JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
+                        items.Add(new BackupItem
+                        {
+                            Kind = "settings", EntryRoot = "tracker/settings.json",
+                            Original = AppSettings.SettingsPath, IsFile = true
+                        });
                         fileCount++;
                     }
 
@@ -148,6 +153,29 @@ namespace AchievementTracker
                                     EntryRoot = "achievements/" + folder.Label + "/" + game.AppId + "/", Original = folder.Dir, IsFile = false
                                 });
                             }
+                        }
+                    }
+
+                    // GSE stores achievements in shared numeric folders rather than per-game folders.
+                    foreach (var folder in Program.GetGseAchievementFolders())
+                    {
+                        string folderId = Path.GetFileName(folder.Dir);
+                        string entryRoot = "achievements/GSE/" + folderId + "/";
+                        int added = 0;
+                        foreach (string file in SafeFiles(folder.Dir))
+                        {
+                            string relative = Path.GetRelativePath(folder.Dir, file).Replace('\\', '/');
+                            added += AddFile(zip, file, entryRoot + relative);
+                        }
+                        if (added > 0)
+                        {
+                            fileCount += added;
+                            sources.Add(entryRoot + "   came from   " + folder.Dir);
+                            items.Add(new BackupItem
+                            {
+                                Kind = "achievement", Game = "GSE Saves", AppId = "GSE",
+                                EntryRoot = entryRoot, Original = folder.Dir, IsFile = false
+                            });
                         }
                     }
 
@@ -329,9 +357,11 @@ namespace AchievementTracker
             text.AppendLine("HOW TO RESTORE");
             text.AppendLine("1. Close Achievement Tracker (Exit from the tray menu).");
             text.AppendLine("2. Extract this zip somewhere.");
-            text.AppendLine("3. Copy the CONTENTS of each folder inside \"saves\" and \"achievements\" back to the place named below.");
-            text.AppendLine("4. Copy tracked_games.json next to the .exe, and unlock_history.json to");
-            text.AppendLine("   %APPDATA%\\AchievementTracker\\ (settings.json goes there too, if you want it).");
+            text.AppendLine("3. Use Restore from backup in the app to choose which files and settings to restore.");
+            text.AppendLine("   The Steam API key is not included and is preserved from your current settings.");
+            text.AppendLine("4. To restore manually, copy the contents of \"saves\" and \"achievements\" to the source folders listed below.");
+            text.AppendLine("   Copy tracked_games.json next to the .exe, and unlock_history.json and settings.json to");
+            text.AppendLine("   %APPDATA%\\AchievementTracker\\.");
             text.AppendLine();
             text.AppendLine("GAME SAVES AND ACHIEVEMENT FILES");
             if (sources.Count == 0) text.AppendLine("(none were found)");

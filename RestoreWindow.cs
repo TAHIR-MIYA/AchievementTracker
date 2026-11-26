@@ -337,11 +337,17 @@ namespace AchievementTracker
             string zipPath = selectedZip;
             RestoreResult result = await Task.Run(() => RestoreService.Apply(zipPath, chosen));
 
-            // The game list and unlock history live in memory while the app runs, so the app applies them itself.
+            // These app-owned files are applied here so the live process stays in sync.
             try
             {
                 if (result.GameListJson != null) owner.ApplyRestoredGameList(result.GameListJson);
                 if (result.HistoryJson != null) UnlockHistory.ReplaceFromJson(result.HistoryJson);
+                if (result.SettingsJson != null)
+                {
+                    AppSettings.RestoreFromJson(result.SettingsJson);
+                    owner.RefreshAfterSettingsRestore();
+                    result.Restored++;
+                }
             }
             catch (Exception ex)
             {

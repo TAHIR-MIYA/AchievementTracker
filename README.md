@@ -11,7 +11,7 @@ A lightweight, standalone Windows desktop application that provides a universal,
 | **Core Engine** | `FileSystemWatcher` | Asynchronously monitors local state files (`.ini` / `.txt`) for state changes, bypassing file-lock collisions. |
 | **Overlay UI** | Windows Forms + GDI32 | Renders a borderless, rounded-corner notification system that bypasses standard Windows focus stealing. |
 | **Audio Subsystem** | `winmm.dll` API | Directly interfaces with the OS for native, zero-dependency `.mp3` playback. |
-| **Steam Engine** | Steam Web API | Fetches authenticated user data, library details, and game icons directly from Steam's remote servers. |
+| **Steam Data** | Steam Web API | Loads achievement schemas, icons, and rarity data for games you add by Steam App ID. |
 
 ---
 
@@ -29,26 +29,15 @@ Because this application is built as a self-contained `.exe`, no installation wi
 
 ## ⚙️ Configuration & Steam Setup
 
-To track your actual Steam library and fetch high-resolution game icons, the application requires read-only access to your public Steam profile via a developer API key.
+Add games to the Library with their Steam App IDs. The app does not import your Steam library or require your Steam ID64.
 
-### Step 1: Obtain a Steam Web API Key
-1. Go to the official Steam Developer portal: [https://steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)
-2. Log in with your Steam account.
-3. In the "Domain Name" box, you can enter `localhost` or `AchievementTracker`.
-4. Check the terms box and click **Register**.
-5. Copy the 32-character alphanumeric **Key** that is generated.
+An optional Steam Web API key lets the app load achievement schemas, names, icons, and rarity data for tracked games. To add one:
 
-### Step 2: Obtain your Steam ID64
-1. Open your Steam client, click your profile name in the top right, and select **Account Details**.
-2. Your 17-digit Steam ID will be displayed in large text just beneath your account name (e.g., `76561198XXXXXXX`).
+1. Get a key from the [Steam Web API key page](https://steamcommunity.com/dev/apikey).
+2. Open **Settings** from the app dashboard.
+3. Paste the key into **Steam Web API key** and save.
 
-### Step 3: Link to the Application
-1. Open the Universal Achievement Tracker dashboard from your System Tray.
-2. Navigate to the **Settings** or **Steam Config** section.
-3. Paste your **Steam API Key** and your **Steam ID64** into their respective fields.
-4. Save the configuration. The app will immediately authenticate and begin downloading your library metadata.
-
-*(Note: Your Steam profile must be set to "Public" for the API to read your game list and achievement progress).*
+Without a key, the app can still use locally available achievement data, but Steam-provided schemas and library progress totals may be unavailable.
 
 ---
 

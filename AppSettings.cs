@@ -28,7 +28,7 @@ namespace AchievementTracker
 
         private const string LegacyPath = "app_settings.json";
 
-        private static string SettingsPath => Path.Combine(
+        public static string SettingsPath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "AchievementTracker", "app_settings.json");
 
@@ -52,6 +52,26 @@ namespace AchievementTracker
             }
             catch { }
 
+            return Normalize(settings);
+        }
+
+        public static void Save() => Write(Current);
+
+        public static void RestoreFromJson(string json)
+        {
+            AppSettings restored = JsonSerializer.Deserialize<AppSettings>(json)
+                ?? throw new InvalidDataException("The backup contains invalid settings.");
+            restored.SteamApiKey = Current.SteamApiKey;
+            Normalize(restored);
+            WriteOrThrow(restored);
+            Current = restored;
+        }
+
+        private static AppSettings Normalize(AppSettings settings)
+        {
+            settings.SteamApiKey ??= "";
+            settings.BackupFolder ??= "";
+            settings.PopupPosition ??= "";
             if (settings.ObsPort < 1024 || settings.ObsPort > 65535) settings.ObsPort = 5757;
             settings.SoundVolume = Math.Max(0, Math.Min(100, settings.SoundVolume));
             settings.PopupSeconds = Math.Max(2, Math.Min(20, settings.PopupSeconds));
@@ -59,8 +79,6 @@ namespace AchievementTracker
             if (Array.IndexOf(validPositions, settings.PopupPosition) < 0) settings.PopupPosition = "top-right";
             return settings;
         }
-
-        public static void Save() => Write(Current);
 
         private static void Write(AppSettings settings)
         {
@@ -70,6 +88,12 @@ namespace AchievementTracker
                 File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch { }
+        }
+
+        private static void WriteOrThrow(AppSettings settings)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 }

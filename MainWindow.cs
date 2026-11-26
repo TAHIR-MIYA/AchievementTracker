@@ -1487,6 +1487,33 @@ namespace AchievementTracker
 
         public void ShowActivityPage() => ShowPage(1);
 
+        public void RefreshAfterSettingsRestore()
+        {
+            LoadSettings();
+            settingsPage = ReplacePage(settingsPage, BuildSettingsPage);
+            backupPage = ReplacePage(backupPage, BuildBackupPage);
+            activityPage = ReplacePage(activityPage, BuildActivityPage);
+            Program.ApplyOverlaySettings();
+            RefreshActivity();
+            RefreshBackupStatus();
+            UpdateStatus();
+        }
+
+        private static Panel ReplacePage(Panel oldPage, Func<Panel> buildPage)
+        {
+            Control parent = oldPage.Parent!;
+            int childIndex = parent.Controls.GetChildIndex(oldPage);
+            bool wasVisible = oldPage.Visible;
+            parent.Controls.Remove(oldPage);
+            oldPage.Dispose();
+
+            Panel newPage = buildPage();
+            newPage.Visible = wasVisible;
+            parent.Controls.Add(newPage);
+            parent.Controls.SetChildIndex(newPage, childIndex);
+            return newPage;
+        }
+
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);

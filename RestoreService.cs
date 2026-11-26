@@ -34,6 +34,7 @@ namespace AchievementTracker
         public string SafetyCopy { get; set; } = "";
         public string? GameListJson { get; set; }
         public string? HistoryJson { get; set; }
+        public string? SettingsJson { get; set; }
         public List<string> Problems { get; set; } = new List<string>();
     }
 
@@ -111,16 +112,16 @@ namespace AchievementTracker
                 case "achievement": group.Title = item.Game + ": achievement files"; break;
                 case "gamelist": group.Title = "Your game list"; break;
                 case "history": group.Title = "Your unlock history"; break;
+                case "settings": group.Title = "Your app settings"; break;
                 default: group.Title = item.Kind; break;
             }
-            group.Detail = item.Original;
-
             string originalFull;
-            try { originalFull = Path.GetFullPath(item.Original); }
+            try { originalFull = Path.GetFullPath(GetRestoreTarget(item)); }
             catch { group.Allowed = false; group.Checked = false; group.Status = "invalid location"; return group; }
+            group.Detail = originalFull;
 
-            // Never write outside the places where saves, achievements and the app's own data belong.
-            if (!IsAllowedTarget(originalFull, item.Kind, games))
+            // Only known restore categories may write to their registered destinations.
+            if (!IsAllowedTarget(originalFull, item, games))
             {
                 group.Allowed = false;
                 group.Checked = false;
@@ -158,34 +159,80 @@ namespace AchievementTracker
             return group;
         }
 
-        private static bool IsAllowedTarget(string fullPath, string kind, List<TrackedGame> games)
+        private static string GetRestoreTarget(BackupItem item)
         {
-            if (kind == "gamelist") return string.Equals(fullPath, Path.GetFullPath(AppPaths.InBase("tracked_games.json")), StringComparison.OrdinalIgnoreCase);
-            if (kind == "history") return string.Equals(fullPath, Path.GetFullPath(UnlockHistory.FilePath), StringComparison.OrdinalIgnoreCase);
+            if (item.Kind == "gamelist") return AppPaths.InBase("tracked_games.json");
+            if (item.Kind == "history") return UnlockHistory.FilePath;
+            if (item.Kind == "settings") return AppSettings.SettingsPath;
 
-            List<string> roots = new List<string>
+            if (item.Kind == "achievement" && string.Equals(item.AppId, "GSE", StringComparison.OrdinalIgnoreCase))
             {
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public",
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)
-            };
-            foreach (TrackedGame game in games)
-            {
-                if (!string.IsNullOrWhiteSpace(game.InstallDir)) roots.Add(game.InstallDir);
-                roots.AddRange(game.SavePaths);
+                string folderId = Path.GetFileName(item.Original);
+                if (uint.TryParse(folderId, out _))
+                    return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves", folderId);
             }
 
-            foreach (string root in roots)
+            if (item.Kind == "achievement" && uint.TryParse(item.AppId, out _))
             {
-                if (string.IsNullOrWhiteSpace(root)) continue;
-                try
+                foreach (var folder in Program.GetAchievementFolders(item.AppId, includeMissing: true))
                 {
-                    string prefix = Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
-                    if (fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+                    string expectedEntryRoot = "achievements/" + folder.Label + "/" + item.AppId + "/";
+                    if (item.EntryRoot.StartsWith(expectedEntryRoot, StringComparison.Ordinal))
+                        return folder.Dir;
                 }
-                catch { }
+            }
+
+            return item.Original;
+        }
+
+        private static bool IsAllowedTarget(string fullPath, BackupItem item, List<TrackedGame> games)
+        {
+            if (item.Kind == "gamelist")
+                return item.IsFile && IsSamePath(fullPath, AppPaths.InBase("tracked_games.json"));
+            if (item.Kind == "history")
+                return item.IsFile && IsSamePath(fullPath, UnlockHistory.FilePath);
+            if (item.Kind == "settings")
+                return item.IsFile && IsSamePath(fullPath, AppSettings.SettingsPath);
+
+            if (item.Kind == "achievement")
+            {
+                if (item.IsFile) return false;
+                if (string.Equals(item.AppId, "GSE", StringComparison.OrdinalIgnoreCase))
+                    return IsGseFolder(fullPath);
+                if (!uint.TryParse(item.AppId, out _)) return false;
+                if (!games.Any(game => string.Equals(game.AppId, item.AppId, StringComparison.OrdinalIgnoreCase)))
+                    return false;
+                return Program.GetAchievementFolders(item.AppId, includeMissing: true)
+                    .Any(folder => IsSamePath(fullPath, folder.Dir));
+            }
+
+            if (item.Kind == "save" && uint.TryParse(item.AppId, out _))
+            {
+                TrackedGame? game = games.FirstOrDefault(candidate =>
+                    string.Equals(candidate.AppId, item.AppId, StringComparison.OrdinalIgnoreCase));
+                if (game == null) return false;
+
+                IEnumerable<string> knownPaths = (game.SavePaths ?? new List<string>()).Concat(SaveLocator.ExistingPaths(game));
+                return knownPaths.Any(path => IsSamePath(fullPath, path));
             }
             return false;
+        }
+
+        private static bool IsGseFolder(string fullPath)
+        {
+            string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+            string? parent = Path.GetDirectoryName(fullPath);
+            return uint.TryParse(Path.GetFileName(fullPath), out _) &&
+                   parent != null && IsSamePath(parent, root);
+        }
+
+        private static bool IsSamePath(string first, string second)
+        {
+            try
+            {
+                return string.Equals(first, Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -211,15 +258,17 @@ namespace AchievementTracker
                                 ZipArchiveEntry? entry = zip.GetEntry(file.EntryName);
                                 if (entry == null) { result.Failed++; continue; }
 
-                                if (group.Item.Kind == "gamelist" || group.Item.Kind == "history")
+                                if (group.Item.Kind == "gamelist" || group.Item.Kind == "history" || group.Item.Kind == "settings")
                                 {
                                     // These two are applied by the app itself (they live in memory while it runs).
                                     using (StreamReader reader = new StreamReader(entry.Open(), Encoding.UTF8))
                                     {
                                         string json = reader.ReadToEnd();
-                                        if (group.Item.Kind == "gamelist") result.GameListJson = json; else result.HistoryJson = json;
+                                        if (group.Item.Kind == "gamelist") result.GameListJson = json;
+                                        else if (group.Item.Kind == "history") result.HistoryJson = json;
+                                        else result.SettingsJson = json;
                                     }
-                                    result.Restored++;
+                                    if (group.Item.Kind != "settings") result.Restored++;
                                     continue;
                                 }
 

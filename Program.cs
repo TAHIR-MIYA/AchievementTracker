@@ -232,18 +232,16 @@ namespace AchievementTracker
 
                     // 1b. WATCH GSE SAVES (alternate location with numeric subfolders)
                     string gseBaseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
-                    if (Directory.Exists(gseBaseDir))
+                    Directory.CreateDirectory(gseBaseDir);
+                    foreach (string dir in Directory.GetDirectories(gseBaseDir))
                     {
-                        foreach (string dir in Directory.GetDirectories(gseBaseDir))
+                        string file = Path.Combine(dir, "achievements.json");
+                        if (File.Exists(file))
                         {
-                            string file = Path.Combine(dir, "achievements.json");
-                            if (File.Exists(file))
-                            {
-                                LoadBaselineState(appId, file, onlyKnownAchievements: true);
-                                AttachWatcher(dir, "achievements.json", (s, e) => OnAchievementFileChanged(s, e, appId, onlyKnownAchievements: true));
-                            }
+                            LoadBaselineState(appId, file, onlyKnownAchievements: true);
                         }
                     }
+                    AttachWatcher(gseBaseDir, "achievements.json", (s, e) => OnAchievementFileChanged(s, e, appId, onlyKnownAchievements: true));
 
                     // 2. WATCH ALL INI EMULATORS (CODEX, RUNE, FLT, TENOKE, OnlineFix)
                     string[] emuFolders = { @"Steam\CODEX", @"Steam\RUNE", @"Steam\FLT", @"Steam\TENOKE", @"OnlineFix" };
@@ -262,7 +260,7 @@ namespace AchievementTracker
                         ParseIniForBaseline(appId, iniPath);
 
                         // Watch the whole directory including subfolders to catch everything
-                        AttachWatcher(emuDir, "*.*", (s, e) => {
+                        AttachWatcher(emuDir, "*", (s, e) => {
                             string lowerName = e.Name?.ToLower() ?? "";
                             if (lowerName.Contains("achievement") || lowerName.Contains("stats"))
                                 ParseIniForChanges(appId, e.FullPath);
@@ -282,12 +280,14 @@ namespace AchievementTracker
         {
             FileSystemWatcher watcher = new FileSystemWatcher(directory, filter)
             {
-                NotifyFilter = NotifyFilters.LastWrite,
-                IncludeSubdirectories = true,
-                EnableRaisingEvents = true
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.DirectoryName,
+                IncludeSubdirectories = true
             };
             watcher.Changed += onChanged;
+            watcher.Created += onChanged;
+            watcher.Renamed += (s, e) => onChanged(s, e);
             activeWatchers.Add(watcher);
+            watcher.EnableRaisingEvents = true;
         }
 
         static void LoadBaselineState(string appId, string filePath)
@@ -343,18 +343,28 @@ namespace AchievementTracker
                     bool isEarned = ExtractAchievementStatus(prop.Value);
                     string stateKey = appId + "_" + achKey; 
 
-                    if (isEarned && (!previousState.ContainsKey(stateKey) || !previousState[stateKey]))
+                    if (isEarned && TryMarkUnlocked(stateKey))
                     {
-                        previousState[stateKey] = true; 
                         if (!AlertsSuppressed) TriggerUI(appId, achKey);
                     }
-                    else if (!isEarned && previousState.ContainsKey(stateKey))
+                    else if (!isEarned)
                     {
                         // Delete from memory so you can re-test it using Notepad!
                         previousState[stateKey] = false; 
                     }
                 }
             } catch { }
+        }
+
+        static bool TryMarkUnlocked(string stateKey)
+        {
+            while (true)
+            {
+                if (previousState.TryAdd(stateKey, true)) return true;
+                if (!previousState.TryGetValue(stateKey, out bool wasUnlocked)) continue;
+                if (wasUnlocked) return false;
+                if (previousState.TryUpdate(stateKey, true, false)) return true;
+            }
         }
 
         static bool ExtractAchievementStatus(JsonElement element)
@@ -387,9 +397,8 @@ namespace AchievementTracker
                     string stateKey = appId + "_" + entry.Key;
                     if (entry.Value)
                     {
-                        if (!previousState.TryGetValue(stateKey, out bool wasUnlocked) || !wasUnlocked)
+                        if (TryMarkUnlocked(stateKey))
                         {
-                            previousState[stateKey] = true;
                             if (!AlertsSuppressed) TriggerUI(appId, entry.Key);
                         }
                     }
@@ -494,14 +503,14 @@ namespace AchievementTracker
             });
         }
 
-        // The folders where emulators keep the achievement files of a game (only those that exist).
-        public static List<(string Label, string Dir)> GetAchievementFolders(string appId)
+        // The folders where emulators keep per-game achievement files.
+        public static List<(string Label, string Dir)> GetAchievementFolders(string appId, bool includeMissing = false)
         {
             List<(string Label, string Dir)> folders = new List<(string Label, string Dir)>();
             string publicDir = Environment.GetEnvironmentVariable("PUBLIC") ?? @"C:\Users\Public";
 
             string goldberg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Goldberg SteamEmu Saves", appId);
-            if (Directory.Exists(goldberg)) folders.Add(("Goldberg", goldberg));
+            if (includeMissing || Directory.Exists(goldberg)) folders.Add(("Goldberg", goldberg));
 
             (string Label, string Sub)[] emulators =
             {
@@ -511,9 +520,21 @@ namespace AchievementTracker
             foreach (var emulator in emulators)
             {
                 string dir = Path.Combine(publicDir, "Documents", emulator.Sub, appId);
-                if (Directory.Exists(dir)) folders.Add((emulator.Label, dir));
+                if (includeMissing || Directory.Exists(dir)) folders.Add((emulator.Label, dir));
             }
             return folders;
+        }
+
+        public static List<(string Label, string Dir)> GetGseAchievementFolders()
+        {
+            string baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+            if (!Directory.Exists(baseDir)) return new List<(string Label, string Dir)>();
+
+            return Directory.GetDirectories(baseDir)
+                .Where(dir => uint.TryParse(Path.GetFileName(dir), out _) &&
+                              File.Exists(Path.Combine(dir, "achievements.json")))
+                .Select(dir => ("GSE", dir))
+                .ToList();
         }
 
         public static List<TrackedGame> GetTrackedGamesSnapshot()
